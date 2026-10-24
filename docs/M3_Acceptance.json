@@ -8,7 +8,7 @@
   "real_opencode_tool_hook": "BLOCKED_ENV",
   "official_mcp_sdk_interop": "UNVERIFIED",
   "tests": "48/48, skipped=0",
-  "analysis_overhead": "n=30; total=728.374ms; per_trace=24.279ms; local synthetic measurement",
+  "analysis_overhead": "n=30; total=717.647ms; per_trace=23.922ms; local synthetic measurement",
   "known_limitations": [
     "OpenCode provider did not emit a real tool hook in M2.6",
     "Context7 proxy probe returned no usable result",

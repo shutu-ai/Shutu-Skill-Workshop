@@ -48,5 +48,5 @@ documentation, not an SDK interoperability claim.
 ## Measured analysis cost
 
 On this Windows/Python 3.14 workspace, 30 synthetic local traces were scanned
-in one bounded batch: `analysis_total_ms=728.374`, or
-`24.279 ms/trace`. This is a local diagnostic measurement, not an SLA.
+in one bounded batch: `analysis_total_ms=717.647`, or
+`23.922 ms/trace`. This is a local diagnostic measurement, not an SLA.
