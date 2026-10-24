@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from shutu_workshop import (
@@ -67,9 +68,23 @@ class M2EndToEndTests(unittest.TestCase):
             events = ingestor.traces.list_events()
             grouped = correlate_events(events)
             request_three = [group for group in grouped if any(event.request_id == "3" for event in group)]
-            self.assertEqual(len(request_three), 1)
-            self.assertGreaterEqual(len(request_three[0]), 3)
-            self.assertEqual({event.request_id for event in request_three[0]}, {"3"})
+            self.assertEqual(len(request_three), 2)
+            self.assertTrue(any(len(group) == 2 for group in request_three))
+            self.assertFalse(
+                any(
+                    len(group) > 1
+                    and {event.observation_source for event in group} == {"agent_adapter", "mcp_observer"}
+                    for group in request_three
+                )
+            )
+            codex_event = next(event for event in events if event.observation_source == "agent_adapter" and event.request_id == "3")
+            mcp_event = next(event for event in events if event.observation_source == "mcp_observer" and event.request_id == "3")
+            bridge = {"bridge_id": "manifest-fixture-1", "verified": True, "source": "test-manifest"}
+            bridged = [
+                replace(codex_event, source_metadata={**codex_event.source_metadata, "correlation_evidence": bridge}),
+                replace(mcp_event, source_metadata={**mcp_event.source_metadata, "correlation_evidence": bridge}),
+            ]
+            self.assertEqual(len(correlate_events(bridged)), 1)
             self.assertEqual(
                 {trace.adapter_id for trace in ingestor.traces.list_traces()},
                 {"codex", "opencode", "mcp-observer-stdio"},

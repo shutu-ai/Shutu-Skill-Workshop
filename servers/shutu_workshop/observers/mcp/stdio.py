@@ -209,20 +209,6 @@ class StdioObserver:
             return
         if isinstance(value, dict):
             self.recorder.observe_json(direction, value)
-            if direction == "server_to_client":
-                result = value.get("result") if isinstance(value.get("result"), dict) else {}
-                method = self._pending_method(value.get("id"))
-                if method == "tools/list" and isinstance(result.get("tools"), list):
-                    self.recorder.register_tools(
-                        result["tools"],
-                        server_info=result.get("serverInfo") if isinstance(result.get("serverInfo"), dict) else {},
-                        protocol=self.recorder.report.protocol_era,
-                    )
-
-    def _pending_method(self, response_id: object) -> str:
-        key = json.dumps(response_id, sort_keys=True, separators=(",", ":"))
-        pending = self.recorder._pending.get(key)  # local observer correlation, never sent to the server
-        return pending[0] if pending else ""
 
 
 def main(argv: list[str] | None = None) -> int:

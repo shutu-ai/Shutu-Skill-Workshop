@@ -111,6 +111,30 @@ class TraceStore:
             ).fetchone()
         return self._trace_from_row(row) if row else None
 
+    def next_event_seq(self, trace_id: str) -> int:
+        """Return the next sequence without keeping an unbounded process cache."""
+
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(seq), -1) + 1 AS next_seq FROM trace_events WHERE trace_id = ?",
+                (trace_id,),
+            ).fetchone()
+        return int(row["next_seq"])
+
+    def find_event_by_source(self, trace_id: str, adapter_event_id: str) -> TraceEvent | None:
+        if not adapter_event_id:
+            return None
+        with self.db.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM trace_events
+                WHERE trace_id = ? AND adapter_event_id = ?
+                ORDER BY rowid ASC LIMIT 1
+                """,
+                (trace_id, adapter_event_id),
+            ).fetchone()
+        return self._event_from_row(row) if row else None
+
     get_trace = get
 
     def list_traces(

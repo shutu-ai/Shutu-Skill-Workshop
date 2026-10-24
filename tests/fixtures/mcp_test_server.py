@@ -122,6 +122,11 @@ class FixtureHTTPHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         request = json.loads(self.rfile.read(length).decode("utf-8"))
         values = handle(request, protocol=self.protocol)
+        if not values and "id" not in request:
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         wants_sse = self.sse or "text/event-stream" in self.headers.get("Accept", "")
         if wants_sse:
             self.send_response(200)
@@ -142,9 +147,15 @@ class FixtureHTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def create_http_server(*, protocol: str = "legacy", sse: bool = False) -> ThreadingHTTPServer:
+def create_http_server(
+    *,
+    protocol: str = "legacy",
+    sse: bool = False,
+    host: str = "127.0.0.1",
+    port: int = 0,
+) -> ThreadingHTTPServer:
     handler = type("FixtureHandler", (FixtureHTTPHandler,), {"protocol": protocol, "sse": sse})
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server
 
@@ -158,9 +169,27 @@ def start_http_server(*, protocol: str = "legacy", sse: bool = False) -> tuple[T
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--transport", choices=("stdio",), default="stdio")
+    parser.add_argument("--transport", choices=("stdio", "http"), default="stdio")
     parser.add_argument("--protocol", choices=("legacy", "modern"), default="legacy")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--sse", action="store_true")
     args = parser.parse_args(argv)
+    if args.transport == "http":
+        server = create_http_server(
+            protocol=args.protocol,
+            sse=args.sse,
+            host=args.host,
+            port=args.port,
+        )
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            return 0
+        finally:
+            server.shutdown()
+            server.server_close()
+        return 0
     return run_stdio(args.protocol)
 
 

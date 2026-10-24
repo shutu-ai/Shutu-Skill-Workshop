@@ -21,6 +21,7 @@ from .adapters import AdapterDescriptor, AdapterEvent, AdapterHealth, BaseAdapte
 from .adapters.opencode import OpenCodeAdapter
 from .capture import Checkpoint, CheckpointedJSONL
 from .observers.mcp import (
+    CorrelationScope,
     HTTPProxyResult,
     McpTraceRecorder,
     ObserverReport,
@@ -52,10 +53,12 @@ __all__ = [
     "TraceIngestor",
     "TraceStore",
     "HTTPProxyResult",
+    "CorrelationScope",
     "McpTraceRecorder",
     "ObserverReport",
     "StdioObserver",
     "StreamableHTTPObserver",
+    "create_relay_server",
     "ValidationError",
     "content_hash",
     "create_ingest_server",
@@ -68,4 +71,8 @@ def __getattr__(name: str):
         from .adapters.codex import CodexAdapter
 
         return CodexAdapter
+    if name == "create_relay_server":
+        from .observers.mcp.relay import create_relay_server
+
+        return create_relay_server
     raise AttributeError(name)
