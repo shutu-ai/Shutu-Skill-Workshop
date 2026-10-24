@@ -1,6 +1,6 @@
 # 下一阶段最小接口设计
 
-本文只冻结 Capability、Trace、Agent Adapter 和 MCP Observer 的边界；M0 不实现这些接口，也不新增运行时依赖。目标是让后续实现可以接入现有 Skill 快照、版本和 ReleaseOperation，而不改变现有 CLI。
+本文冻结 Capability、Trace、Agent Adapter 和 MCP Observer 的边界。M1 已实现 Capability/Trace 的本地基础存储、JSONL/loopback 测试摄取和脱敏；真实 Agent Adapter 与 MCP Observer 仍留给后续阶段。目标是让后续实现可以接入现有 Skill 快照、版本和 ReleaseOperation，而不改变现有 CLI。
 
 ## 1. Capability
 
@@ -113,9 +113,10 @@ McpObserver:
 
 `ObserverHandle` 负责 stdio 或 Streamable HTTP 的转发/关闭，必须保持协议字节、JSON-RPC id 和通知顺序；脱敏摘要只写 Trace。`fault-injection` 是显式评估模式，不能成为默认行为。
 
-## 5. M0 与后续边界
+## 5. M1、M0 与后续边界
 
-- M0 只交付 Proposal 测试指纹、Release Journal、锁和恢复；不创建上述 registry/store/adapter/observer 实现。
-- 后续首先以 SQLite additive migration 承载 CapabilityVersion、Trace、TraceEvent，再做 JSONL/HTTP 测试 Adapter 和只读 MCP Observer。
+- M0 继续负责 Proposal 测试指纹、Release Journal、锁和恢复；M1 的 `servers/shutu_workshop` 通过同一 `.skill_workshop/state.db` 做 additive migration，不改写 M0 门面。
+- M1 只提供模拟来源的 JSONL/loopback ingest；夹具成功标为 `SIMULATED_PASS`，不宣称真实 Codex/OpenCode/MCP 接入。
+- M1 已以 SQLite additive migration 承载 CapabilityVersion、Trace、TraceEvent，并提供 JSONL/HTTP 模拟摄取；下一步再做真实 JSONL/宿主 Adapter 和只读 MCP Observer。
 - 现有 `SkillWorkshop.snapshot_skill/list_versions` 将来通过兼容 service 映射到 Capability，但 CLI `snapshot`、`versions`、`apply`、`rollback` 仍保持原入口。
 - ReleaseService 是唯一文件发布入口；Adapter reload/ack 和发布后 observation 不应绕过 Journal。

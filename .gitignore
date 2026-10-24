@@ -1,0 +1,9 @@
+# Workspace-owned runtime state and test output.
+.skill_workshop/
+.test-ws/
+pytest-cache-files-*/
+__pycache__/
+*.py[cod]
+
+# The local push worktree is repository tooling, not project content.
+.git-push/
