@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 6
+    latest_schema_version = 7
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -103,6 +103,11 @@ class M1Database:
                 self._create_m4_evolution_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (6, datetime('now'))"
+                )
+            if 7 not in applied:
+                self._create_m43_evaluation_integrity_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (7, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -613,3 +618,53 @@ class M1Database:
             "CREATE INDEX IF NOT EXISTS idx_evaluation_case_results_run ON evaluation_case_results(run_id, case_id, side)",
         ):
             connection.execute(statement)
+
+    @staticmethod
+    def _create_m43_evaluation_integrity_schema(connection: sqlite3.Connection) -> None:
+        """Add execution provenance and cache identity without rewriting M4 history."""
+
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(evaluation_runs)")}
+        run_additions = {
+            "execution_manifest_hash": "TEXT NOT NULL DEFAULT ''",
+            "execution_manifest_json": "TEXT NOT NULL DEFAULT '{}'",
+            "runner_id": "TEXT NOT NULL DEFAULT ''",
+            "runner_version": "TEXT NOT NULL DEFAULT ''",
+            "runner_config_hash": "TEXT NOT NULL DEFAULT ''",
+            "oracle_id": "TEXT NOT NULL DEFAULT ''",
+            "oracle_version": "TEXT NOT NULL DEFAULT ''",
+            "baseline_artifact_hash": "TEXT NOT NULL DEFAULT ''",
+            "candidate_artifact_hash": "TEXT NOT NULL DEFAULT ''",
+            "evidence_tier": "TEXT NOT NULL DEFAULT 'STATIC_ONLY'",
+        }
+        for name, definition in run_additions.items():
+            if name not in run_columns:
+                connection.execute(f"ALTER TABLE evaluation_runs ADD COLUMN {name} {definition}")
+
+        result_columns = {row[1] for row in connection.execute("PRAGMA table_info(evaluation_case_results)")}
+        result_additions = {
+            "execution_status": "TEXT NOT NULL DEFAULT 'unknown'",
+            "provenance": "TEXT NOT NULL DEFAULT 'imported_unverified'",
+            "runner_id": "TEXT NOT NULL DEFAULT ''",
+            "runner_version": "TEXT NOT NULL DEFAULT ''",
+            "artifact_hash": "TEXT NOT NULL DEFAULT ''",
+            "task_input_hash": "TEXT NOT NULL DEFAULT ''",
+            "environment_fingerprint": "TEXT NOT NULL DEFAULT ''",
+            "output_digest": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in result_additions.items():
+            if name not in result_columns:
+                connection.execute(f"ALTER TABLE evaluation_case_results ADD COLUMN {name} {definition}")
+
+        verdict_columns = {row[1] for row in connection.execute("PRAGMA table_info(evaluation_verdicts)")}
+        if "evidence_tier" not in verdict_columns:
+            connection.execute(
+                "ALTER TABLE evaluation_verdicts ADD COLUMN evidence_tier TEXT NOT NULL DEFAULT 'STATIC_ONLY'"
+            )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_evaluation_runs_manifest "
+            "ON evaluation_runs(execution_manifest_hash) WHERE execution_manifest_hash <> ''"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_manifest "
+            "ON evaluation_runs(execution_manifest_hash, status)"
+        )

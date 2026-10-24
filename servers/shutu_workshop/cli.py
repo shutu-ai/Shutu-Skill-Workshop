@@ -119,7 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation_commands = evaluation.add_subparsers(dest="eval_command", required=True)
     evaluation_run = evaluation_commands.add_parser("run")
     evaluation_run.add_argument("--proposal", dest="proposal_id", required=True)
-    evaluation_run.add_argument("--suite", default="m4-local-fixture")
+    evaluation_run.add_argument("--suite", default="m4-local-fixture-v2")
     evaluation_run.add_argument("--mode", choices=("fixture", "real"), default="fixture")
     evaluation_run.add_argument("--json", action="store_true")
     evaluation_report = evaluation_commands.add_parser("report")

@@ -18,6 +18,7 @@ from shutu_workshop.evolution import (
     DiagnosisOutputError,
     EvidenceBundleBuilder,
     StaticValidator,
+    local_fixture_candidate_payload,
     local_fixture_suite,
     validate_evidence_refs,
 )
@@ -85,6 +86,13 @@ class M4EvolutionTests(unittest.TestCase):
         )
         accepted = proposal_service.review(ready.proposal_id, "accept-for-eval", expected_row_version=ready.row_version)
         self.assertEqual(accepted.status, "accepted_for_evaluation")
+        accepted = proposal_service.revise(
+            accepted.proposal_id,
+            {**accepted.payload, **local_fixture_candidate_payload()},
+            expected_row_version=accepted.row_version,
+        )
+        ready = proposal_service.review(accepted.proposal_id, "ready-for-review", expected_row_version=accepted.row_version)
+        accepted = proposal_service.review(ready.proposal_id, "accept-for-eval", expected_row_version=ready.row_version)
 
         evaluation = EvaluationService(self.workspace)
         result = evaluation.run(accepted.proposal_id, suite=local_fixture_suite(), mode="fixture")
@@ -93,6 +101,7 @@ class M4EvolutionTests(unittest.TestCase):
         self.assertEqual(result.verdict.statistics["baseline_success"], 3)
         self.assertEqual(result.verdict.statistics["candidate_success"], 5)
         self.assertEqual(result.verdict.statistics["holdout_cases"], 1)
+        self.assertEqual(result.verdict.evidence_tier, "FIXTURE_EXECUTED")
         self.assertEqual(proposal_service.get(accepted.proposal_id).status, "evaluated")
         replay = evaluation.run(accepted.proposal_id, suite=local_fixture_suite(), mode="fixture")
         self.assertEqual(replay.run["run_id"], result.run["run_id"])
@@ -105,7 +114,10 @@ class M4EvolutionTests(unittest.TestCase):
         proposal = proposal_service.create_from_diagnosis(issue_id, report.diagnosis_id)[0]
         ready = proposal_service.review(proposal.proposal_id, "ready-for-review")
         accepted = proposal_service.review(ready.proposal_id, "accept-for-eval", expected_row_version=ready.row_version)
-        revised = proposal_service.revise(accepted.proposal_id, {**accepted.payload, "fixture_outputs": {"mcp_echo": {"bad": True}}})
+        revised = proposal_service.revise(
+            accepted.proposal_id,
+            {**accepted.payload, **local_fixture_candidate_payload("m4-fixture-bad-v2")},
+        )
         ready_again = proposal_service.review(revised.proposal_id, "ready-for-review", expected_row_version=revised.row_version)
         accepted_again = proposal_service.review(ready_again.proposal_id, "accept-for-eval", expected_row_version=ready_again.row_version)
         result = EvaluationService(self.workspace).run(accepted_again.proposal_id, suite=local_fixture_suite(), mode="fixture")

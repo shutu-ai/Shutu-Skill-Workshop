@@ -197,6 +197,120 @@ class TaskCase:
 
 
 @dataclass(frozen=True)
+class ExecutableCaseInput:
+    """The only case data a Runner may receive; Oracle data is intentionally absent."""
+
+    case_id: str
+    task_input: Any
+    allowed_tools: tuple[str, ...] = ()
+    timeout_and_resource_limits: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "case_id": self.case_id,
+            "task_input": self.task_input,
+            "allowed_tools": _items(self.allowed_tools),
+            "timeout_and_resource_limits": dict(self.timeout_and_resource_limits),
+        }
+
+
+@dataclass(frozen=True)
+class ExecutableCandidate:
+    side: str
+    immutable_artifact_ref: str
+    artifact_hash: str
+    capability_version_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "side": self.side,
+            "immutable_artifact_ref": self.immutable_artifact_ref,
+            "artifact_hash": self.artifact_hash,
+            "capability_version_id": self.capability_version_id,
+        }
+
+
+@dataclass(frozen=True)
+class RunEvidence:
+    run_id: str
+    case_id: str
+    side: str
+    runner_id: str
+    runner_version: str
+    runner_config_hash: str
+    artifact_hash: str
+    task_input_hash: str
+    environment_fingerprint: str
+    started_at: str
+    ended_at: str
+    execution_status: str
+    provenance: str
+    output_digest: str = ""
+    bounded_output_ref: str = ""
+    observed_tool_calls: int | None = None
+    retries: int | None = None
+    duration_ms: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "case_id": self.case_id,
+            "side": self.side,
+            "runner_id": self.runner_id,
+            "runner_version": self.runner_version,
+            "runner_config_hash": self.runner_config_hash,
+            "artifact_hash": self.artifact_hash,
+            "task_input_hash": self.task_input_hash,
+            "environment_fingerprint": self.environment_fingerprint,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "execution_status": self.execution_status,
+            "provenance": self.provenance,
+            "output_digest": self.output_digest,
+            "bounded_output_ref": self.bounded_output_ref,
+            "observed_tool_calls": self.observed_tool_calls,
+            "retries": self.retries,
+            "duration_ms": self.duration_ms,
+        }
+
+
+@dataclass(frozen=True)
+class FixtureExecution:
+    output: Any = None
+    execution_status: str = "not_executed"
+    provenance: str = "imported_unverified"
+    runner_id: str = ""
+    runner_version: str = ""
+    runner_config_hash: str = ""
+    artifact_hash: str = ""
+    task_input_hash: str = ""
+    environment_fingerprint: str = ""
+    output_digest: str = ""
+    errors: tuple[str, ...] = ()
+    duration_ms: int | None = None
+    tool_call_count: int | None = None
+    retry_count: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "output": self.output,
+            "execution_status": self.execution_status,
+            "provenance": self.provenance,
+            "runner_id": self.runner_id,
+            "runner_version": self.runner_version,
+            "runner_config_hash": self.runner_config_hash,
+            "artifact_hash": self.artifact_hash,
+            "task_input_hash": self.task_input_hash,
+            "environment_fingerprint": self.environment_fingerprint,
+            "output_digest": self.output_digest,
+            "errors": _items(self.errors),
+            "duration_ms": self.duration_ms,
+            "tool_call_count": self.tool_call_count,
+            "retry_count": self.retry_count,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationSuite:
     suite_id: str
     name: str
@@ -250,6 +364,14 @@ class EvaluationCaseResult:
     output_ref: dict[str, Any]
     errors: tuple[str, ...]
     observation_completeness: str
+    execution_status: str = "unknown"
+    provenance: str = "imported_unverified"
+    runner_id: str = ""
+    runner_version: str = ""
+    artifact_hash: str = ""
+    task_input_hash: str = ""
+    environment_fingerprint: str = ""
+    output_digest: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -267,6 +389,14 @@ class EvaluationCaseResult:
             "output_ref": dict(self.output_ref),
             "errors": _items(self.errors),
             "observation_completeness": self.observation_completeness,
+            "execution_status": self.execution_status,
+            "provenance": self.provenance,
+            "runner_id": self.runner_id,
+            "runner_version": self.runner_version,
+            "artifact_hash": self.artifact_hash,
+            "task_input_hash": self.task_input_hash,
+            "environment_fingerprint": self.environment_fingerprint,
+            "output_digest": self.output_digest,
         }
 
 
@@ -278,6 +408,7 @@ class EvaluationVerdict:
     statistics: dict[str, Any]
     regression: dict[str, Any]
     created_at: str
+    evidence_tier: str = "STATIC_ONLY"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -287,6 +418,7 @@ class EvaluationVerdict:
             "statistics": dict(self.statistics),
             "regression": dict(self.regression),
             "created_at": self.created_at,
+            "evidence_tier": self.evidence_tier,
         }
 
 
@@ -314,8 +446,12 @@ __all__ = [
     "EvaluationReport",
     "EvaluationSuite",
     "EvaluationVerdict",
+    "ExecutableCandidate",
+    "ExecutableCaseInput",
     "EvidenceBundle",
+    "FixtureExecution",
     "Proposal",
     "RecommendedAction",
+    "RunEvidence",
     "TaskCase",
 ]

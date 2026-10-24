@@ -1,7 +1,14 @@
 """M4 evidence-gated diagnosis, proposal review, and evaluation."""
 
 from .diagnosis import DiagnosisAdvisor, DiagnosisOutputError, EvolutionDiagnosisService
-from .evaluation import EvaluationService, StaticValidator, local_fixture_suite
+from .evaluation import (
+    EvaluationService,
+    FixtureRunner,
+    LocalFixtureRunner,
+    StaticValidator,
+    local_fixture_candidate_payload,
+    local_fixture_suite,
+)
 from .evidence import EvidenceBundleBuilder, EvidenceValidationError, validate_evidence_refs
 from .models import (
     DiagnosisHypothesis,
@@ -11,9 +18,13 @@ from .models import (
     EvaluationReport,
     EvaluationSuite,
     EvaluationVerdict,
+    ExecutableCandidate,
+    ExecutableCaseInput,
     EvidenceBundle,
+    FixtureExecution,
     Proposal,
     RecommendedAction,
+    RunEvidence,
     TaskCase,
 )
 from .proposals import PROPOSAL_CATEGORIES, PROPOSAL_STATUSES, ProposalService
@@ -40,11 +51,15 @@ __all__ = [
     "EvaluationService",
     "EvaluationSuite",
     "EvaluationVerdict",
+    "ExecutableCandidate",
+    "ExecutableCaseInput",
     "EvidenceBundle",
     "EvidenceBundleBuilder",
     "EvidenceValidationError",
     "EvolutionDiagnosisService",
     "FakeProvider",
+    "FixtureExecution",
+    "FixtureRunner",
     "HTTPDiagnosisProvider",
     "LLMClient",
     "PROPOSAL_CATEGORIES",
@@ -55,8 +70,11 @@ __all__ = [
     "ProviderResponse",
     "ProviderUnavailable",
     "RecommendedAction",
+    "RunEvidence",
     "StaticValidator",
     "TaskCase",
+    "LocalFixtureRunner",
+    "local_fixture_candidate_payload",
     "local_fixture_suite",
     "provider_from_name",
     "validate_evidence_refs",

@@ -70,12 +70,15 @@ against an independent fixture Oracle. Correctness is primary; tool calls,
 retries, duration, tokens, and cost are separate metrics. Token/cost fields
 remain unknown when not observed. Holdout cases are retained in the suite.
 
-The built-in `m4-local-fixture` covers a Skill safe-path case plus MCP
-`echo`, `add`, `error`, and an independent echo holdout. A bad candidate is
-`REGRESSED`; incomplete observations are `INCONCLUSIVE`. `mode=real` is an
-explicit, side-effect-free `BLOCKED_ENV` record until a separately authorised
-runner exists.
+The trusted `m4-local-fixture-v2` covers a Skill safe-path case plus MCP
+`echo`, `add`, `error`, and an independent echo holdout. Baseline and Candidate
+are actually executed by a bounded local Runner; a bad artifact is
+`REGRESSED`, while incomplete observations are `INCONCLUSIVE`. The former
+`m4-local-fixture` score is historical and `LEGACY_UNTRUSTED_EVAL`.
+`mode=real` remains an explicit, side-effect-free `BLOCKED_ENV` record until a
+separately authorised runner exists.
 
 SQLite migration 6 creates separate tables for reports, proposals, suites,
-candidates, runs, case results, and verdicts. Only bounded summaries and
-output digests are persisted.
+candidates, runs, case results, and verdicts. Migration 7 adds execution
+manifest identity, Runner/Oracle metadata, evidence tier, and bounded case
+provenance. Only bounded summaries and output digests are persisted.
