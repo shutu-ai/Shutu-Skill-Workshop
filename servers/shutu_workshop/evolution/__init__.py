@@ -3,6 +3,7 @@
 from .diagnosis import DiagnosisAdvisor, DiagnosisOutputError, EvolutionDiagnosisService
 from .evaluation import (
     EvaluationService,
+    FileBackedIsolatedRunner,
     FixtureRunner,
     LocalFixtureRunner,
     StaticValidator,
@@ -49,6 +50,7 @@ __all__ = [
     "EvaluationCaseResult",
     "EvaluationReport",
     "EvaluationService",
+    "FileBackedIsolatedRunner",
     "EvaluationSuite",
     "EvaluationVerdict",
     "ExecutableCandidate",

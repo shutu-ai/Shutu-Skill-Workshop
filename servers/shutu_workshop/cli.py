@@ -10,9 +10,23 @@ from typing import Any
 
 from .capabilities import CapabilityRegistry
 from .diagnostics import DiagnosisService, ISSUE_STATUSES
-from .evolution import EvaluationService, EvolutionDiagnosisService, ProposalService, local_fixture_suite
+from .evolution import (
+    EvaluationService,
+    EvolutionDiagnosisService,
+    FileBackedIsolatedRunner,
+    ProposalService,
+    local_fixture_suite,
+)
 from .ingestion import TraceIngestor
 from .models import Capability
+from .release import (
+    ArtifactManifest,
+    FileArtifactService,
+    ObservationWindow,
+    ReleaseObservationService,
+    ReleasePlanService,
+    isolated_skill_suite,
+)
 from .traces import TraceStore
 
 
@@ -26,6 +40,20 @@ def _value(value: Any) -> Any:
 
 def _print(value: Any) -> None:
     print(json.dumps(_value(value), ensure_ascii=False, indent=2))
+
+
+def _load_manifest(workspace: Path, proposal_id: str, path: Path | None) -> ArtifactManifest:
+    candidate = path
+    if candidate is None:
+        root = workspace / ".skill_workshop" / "m5-artifacts"
+        matches = sorted(root.glob(f"{proposal_id}-*.json"))
+        candidate = matches[-1] if matches else None
+    if candidate is None or not candidate.is_file():
+        raise SystemExit("candidate manifest does not exist; materialize an artifact first")
+    try:
+        return ArtifactManifest.from_dict(json.loads(candidate.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"invalid candidate manifest: {exc}") from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -120,11 +148,67 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation_run = evaluation_commands.add_parser("run")
     evaluation_run.add_argument("--proposal", dest="proposal_id", required=True)
     evaluation_run.add_argument("--suite", default="m4-local-fixture-v2")
-    evaluation_run.add_argument("--mode", choices=("fixture", "real"), default="fixture")
+    evaluation_run.add_argument("--mode", choices=("fixture", "isolated", "real"), default="fixture")
+    evaluation_run.add_argument("--baseline-root", type=Path)
+    evaluation_run.add_argument("--candidate-root", type=Path)
     evaluation_run.add_argument("--json", action="store_true")
     evaluation_report = evaluation_commands.add_parser("report")
     evaluation_report.add_argument("eval_id")
     evaluation_report.add_argument("--json", action="store_true")
+
+    release = commands.add_parser("release")
+    release_commands = release.add_subparsers(dest="release_command", required=True)
+    release_materialize = release_commands.add_parser("materialize")
+    release_materialize.add_argument("--proposal", dest="proposal_id", required=True)
+    release_materialize.add_argument("--baseline-root", type=Path, required=True)
+    release_materialize.add_argument("--candidate-root", type=Path, required=True)
+    release_materialize.add_argument("--isolated-root", type=Path, required=True)
+    release_materialize.add_argument("--json", action="store_true")
+    release_eligible = release_commands.add_parser("eligible")
+    release_eligible.add_argument("--proposal", dest="proposal_id", required=True)
+    release_eligible.add_argument("--evaluation", dest="evaluation_run_id", required=True)
+    release_eligible.add_argument("--candidate-manifest", type=Path)
+    release_eligible.add_argument("--target", type=Path)
+    release_eligible.add_argument("--target-scope", default="isolated_workspace")
+    release_eligible.add_argument("--approval-ref", type=Path)
+    release_eligible.add_argument("--json", action="store_true")
+    release_plan = release_commands.add_parser("plan")
+    release_plan.add_argument("--proposal", dest="proposal_id", required=True)
+    release_plan.add_argument("--evaluation", dest="evaluation_run_id", required=True)
+    release_plan.add_argument("--candidate-manifest", type=Path)
+    release_plan.add_argument("--isolated-root", type=Path, required=True)
+    release_plan.add_argument("--skill-name", default="")
+    release_plan.add_argument("--target-scope", default="isolated_workspace")
+    release_plan.add_argument("--json", action="store_true")
+    release_approve = release_commands.add_parser("approve")
+    release_approve.add_argument("plan_id")
+    release_approve.add_argument("--expected-hash", required=True)
+    release_approve.add_argument("--reviewer", default="cli")
+    release_approve.add_argument("--json", action="store_true")
+    release_verify = release_commands.add_parser("verify")
+    release_verify.add_argument("plan_id")
+    release_verify.add_argument("--isolated-root", type=Path)
+    release_verify.add_argument("--json", action="store_true")
+    release_execute = release_commands.add_parser("execute")
+    release_execute.add_argument("plan_id")
+    release_execute.add_argument("--isolated-root", type=Path, required=True)
+    release_execute.add_argument("--json", action="store_true")
+    release_status = release_commands.add_parser("status")
+    release_status.add_argument("plan_id")
+    release_status.add_argument("--json", action="store_true")
+    release_observe = release_commands.add_parser("observe")
+    release_observe.add_argument("release_id")
+    release_observe.add_argument("--before-start", required=True)
+    release_observe.add_argument("--before-end", required=True)
+    release_observe.add_argument("--after-start", required=True)
+    release_observe.add_argument("--after-end", required=True)
+    release_observe.add_argument("--min-samples", type=int, default=2)
+    release_observe.add_argument("--json", action="store_true")
+    release_rollback = release_commands.add_parser("rollback")
+    release_rollback.add_argument("release_id")
+    release_rollback.add_argument("--version", required=True)
+    release_rollback.add_argument("--isolated-root", type=Path, required=True)
+    release_rollback.add_argument("--json", action="store_true")
     return parser
 
 
@@ -245,12 +329,93 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "eval":
         service = EvaluationService(args.workspace)
         if args.eval_command == "run":
-            suite = local_fixture_suite()
-            if args.suite not in {suite.suite_id, "local", "m4-local-fixture"}:
-                raise SystemExit("unknown local evaluation suite")
+            if args.mode == "isolated":
+                if args.baseline_root is None or args.candidate_root is None:
+                    raise SystemExit("isolated evaluation requires --baseline-root and --candidate-root")
+                suite = isolated_skill_suite()
+                service = EvaluationService(
+                    args.workspace,
+                    runner=FileBackedIsolatedRunner(
+                        args.baseline_root,
+                        args.candidate_root,
+                        allowed_root=args.baseline_root.parent,
+                    ),
+                )
+                if args.suite not in {suite.suite_id, "m5-isolated-skill", "m4-local-fixture-v2"}:
+                    raise SystemExit("unknown isolated evaluation suite")
+            else:
+                suite = local_fixture_suite()
+                if args.suite not in {suite.suite_id, "local", "m4-local-fixture"}:
+                    raise SystemExit("unknown local evaluation suite")
             _print(service.run(args.proposal_id, suite=suite, mode=args.mode))
         elif args.eval_command == "report":
             _print(service.report(args.eval_id))
+        return 0
+
+    if args.command == "release":
+        service = ReleasePlanService(args.workspace)
+        if args.release_command == "materialize":
+            proposal = service.proposals.get(args.proposal_id)
+            if proposal is None:
+                raise SystemExit("proposal does not exist")
+            _print(
+                FileArtifactService(args.workspace).materialize(
+                    proposal,
+                    args.baseline_root,
+                    args.candidate_root,
+                    isolated_root=args.isolated_root,
+                )
+            )
+        elif args.release_command == "eligible":
+            manifest = _load_manifest(args.workspace, args.proposal_id, args.candidate_manifest)
+            approval = None
+            if args.approval_ref:
+                approval = json.loads(args.approval_ref.read_text(encoding="utf-8"))
+            _print(
+                service.eligibility.assess(
+                    args.proposal_id,
+                    args.evaluation_run_id,
+                    manifest,
+                    args.target or manifest.target_root,
+                    args.target_scope,
+                    approval,
+                )
+            )
+        elif args.release_command == "plan":
+            manifest = _load_manifest(args.workspace, args.proposal_id, args.candidate_manifest)
+            _print(
+                service.create_plan(
+                    args.proposal_id,
+                    args.evaluation_run_id,
+                    manifest,
+                    args.isolated_root,
+                    target_skill_name=args.skill_name or None,
+                    target_scope=args.target_scope,
+                )
+            )
+        elif args.release_command == "approve":
+            _print(service.approve(args.plan_id, reviewer=args.reviewer, expected_plan_hash=args.expected_hash))
+        elif args.release_command == "verify":
+            _print(service.verify(args.plan_id, isolated_root=args.isolated_root))
+        elif args.release_command == "execute":
+            _print(service.execute(args.plan_id, isolated_root=args.isolated_root))
+        elif args.release_command == "status":
+            _print(service.status(args.plan_id))
+        elif args.release_command == "observe":
+            _print(
+                ReleaseObservationService(args.workspace).observe(
+                    args.release_id,
+                    ObservationWindow(
+                        before_start=args.before_start,
+                        before_end=args.before_end,
+                        after_start=args.after_start,
+                        after_end=args.after_end,
+                        min_samples=args.min_samples,
+                    ),
+                )
+            )
+        elif args.release_command == "rollback":
+            _print(service.rollback(args.release_id, args.version))
         return 0
 
     ingestor = TraceIngestor(args.workspace)

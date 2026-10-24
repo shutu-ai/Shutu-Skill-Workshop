@@ -232,6 +232,7 @@ class ProposalService:
         payload: dict[str, Any],
         *,
         expected_row_version: int | None = None,
+        category: str | None = None,
     ) -> Proposal:
         with self.db.transaction() as connection:
             row = connection.execute("SELECT * FROM evolution_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
@@ -240,6 +241,9 @@ class ProposalService:
             current = self._from_row(row)
             if expected_row_version is not None and expected_row_version != current.row_version:
                 raise ConcurrentUpdateError("proposal row_version changed")
+            next_category = category or current.category
+            if next_category not in PROPOSAL_CATEGORIES:
+                raise ValueError(f"unsupported proposal category: {next_category}")
             target_hash = _digest({"capability_id": current.capability_id, "capability_version_id": current.capability_version_id, "payload": payload})
             candidate_hash = _digest(
                 {
@@ -247,6 +251,7 @@ class ProposalService:
                     "diagnosis_id": current.diagnosis_id,
                     "evidence_bundle_hash": current.evidence_bundle_hash,
                     "proposal_version": current.proposal_version + 1,
+                    "category": next_category,
                     "target_hash": target_hash,
                     "payload": payload,
                 }
@@ -255,12 +260,12 @@ class ProposalService:
             connection.execute(
                 """
                 UPDATE evolution_proposals
-                SET target_hash = ?, proposal_version = ?, status = 'ready_for_review',
+                SET category = ?, target_hash = ?, proposal_version = ?, status = 'ready_for_review',
                     payload_json = ?, candidate_hash = ?, evaluation_id = '',
                     stale_reason = 'candidate_changed', updated_at = ?, row_version = row_version + 1
                 WHERE proposal_id = ? AND row_version = ?
                 """,
-                (target_hash, current.proposal_version + 1, _canonical(payload), candidate_hash, now, proposal_id, current.row_version),
+                (next_category, target_hash, current.proposal_version + 1, _canonical(payload), candidate_hash, now, proposal_id, current.row_version),
             )
         value = self.get(proposal_id)
         if value is None:

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Protocol
 
 from ..models import new_id, utc_now
@@ -34,6 +39,8 @@ _EVALUATION_LOCK = threading.RLock()
 _FIXTURE_ORACLE_ID = "expected-output-oracle"
 _FIXTURE_ORACLE_VERSION = "2"
 _FIXTURE_EVIDENCE = "FIXTURE_EXECUTED"
+_ISOLATED_EVIDENCE = "ISOLATED_ARTIFACT_EXECUTED"
+_EVALUATION_LEASE_SECONDS = 300
 
 
 def _canonical(value: Any) -> str:
@@ -42,6 +49,26 @@ def _canonical(value: Any) -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _lease_until() -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=_EVALUATION_LEASE_SECONDS)).isoformat(timespec="seconds")
+
+
+def _tree_hash(root: Path) -> str:
+    if not root.is_dir():
+        return ""
+    digest = hashlib.sha256()
+    for item in root.rglob("*"):
+        if item.is_symlink():
+            raise ValueError("symlinks are not allowed in isolated artifacts")
+    for item in sorted(item for item in root.rglob("*") if item.is_file()):
+        relative = item.relative_to(root).as_posix()
+        file_digest = hashlib.sha256(item.read_bytes()).hexdigest()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(file_digest))
+    return digest.hexdigest()
 
 
 _FIXTURE_ARTIFACTS: dict[str, dict[str, str]] = {
@@ -261,6 +288,120 @@ class LocalFixtureRunner:
         )
 
 
+class FileBackedIsolatedRunner:
+    """Execute a frozen local Skill helper with no network or external target."""
+
+    runner_id = "shutu.file-backed-isolated-runner"
+    runner_version = "1"
+
+    def __init__(
+        self,
+        baseline_root: str | Path,
+        candidate_root: str | Path,
+        *,
+        timeout_seconds: float = 2.0,
+        allowed_root: str | Path | None = None,
+    ) -> None:
+        self.baseline_ref = str(Path(baseline_root).resolve())
+        self.candidate_ref = str(Path(candidate_root).resolve())
+        self.timeout_seconds = max(0.1, float(timeout_seconds))
+        self.allowed_root = Path(allowed_root or Path(self.baseline_ref).parent).resolve()
+        self._validate_root(Path(self.baseline_ref))
+        self._validate_root(Path(self.candidate_ref))
+        self.runner_config_hash = _digest(
+            {
+                "runner_id": self.runner_id,
+                "runner_version": self.runner_version,
+                "timeout_seconds": self.timeout_seconds,
+                "allowed_root": str(self.allowed_root),
+            }
+        )
+
+    def _validate_root(self, root: Path) -> None:
+        if not root.is_dir():
+            raise ValueError(f"isolated artifact does not exist: {root}")
+        try:
+            root.relative_to(self.allowed_root)
+        except ValueError as exc:
+            raise ValueError("isolated artifact escapes the allowed root") from exc
+        for item in root.rglob("*"):
+            if item.is_symlink():
+                raise ValueError("symlinks are not allowed in isolated artifacts")
+        if not (root / "SKILL.md").is_file() or not (root / "scripts" / "validator.py").is_file():
+            raise ValueError("isolated artifact requires SKILL.md and scripts/validator.py")
+
+    def artifact_hash(self, side: str) -> str:
+        root = self._root(side)
+        return _tree_hash(root)
+
+    def artifact_ref(self, side: str) -> str:
+        return str(self._root(side))
+
+    def _root(self, side: str) -> Path:
+        if side == "baseline":
+            return Path(self.baseline_ref)
+        if side == "candidate":
+            return Path(self.candidate_ref)
+        raise ValueError(f"unsupported isolated artifact side: {side}")
+
+    def supports(self, case_input: ExecutableCaseInput) -> bool:
+        return isinstance(case_input.task_input, dict)
+
+    def execute(self, case_input: ExecutableCaseInput, candidate: ExecutableCandidate) -> FixtureExecution:
+        started = time.perf_counter()
+        root = Path(candidate.immutable_artifact_ref).resolve()
+        common = {
+            "runner_id": self.runner_id,
+            "runner_version": self.runner_version,
+            "runner_config_hash": self.runner_config_hash,
+            "artifact_hash": candidate.artifact_hash,
+            "task_input_hash": _digest(case_input.task_input),
+            "environment_fingerprint": "isolated-file-v1",
+        }
+        try:
+            self._validate_root(root)
+            actual_hash = _tree_hash(root)
+            if actual_hash != candidate.artifact_hash:
+                raise ValueError("artifact_hash_mismatch")
+            completed = subprocess.run(
+                [sys.executable, str(root / "scripts" / "validator.py")],
+                input=json.dumps(case_input.task_input, ensure_ascii=False),
+                text=True,
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                cwd=str(root),
+                env={"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8"},
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(f"runner_exit_{completed.returncode}")
+            if len(completed.stdout.encode("utf-8")) > 64 * 1024:
+                raise ValueError("runner_output_exceeds_limit")
+            output = json.loads(completed.stdout)
+            if not isinstance(output, dict):
+                raise ValueError("runner_output_must_be_object")
+            return FixtureExecution(
+                output=output,
+                execution_status="completed",
+                provenance="isolated_artifact_executed",
+                output_digest=_digest(output),
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                tool_call_count=0,
+                **common,
+            )
+        except subprocess.TimeoutExpired:
+            error = "runner_timeout"
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            error = str(exc) or type(exc).__name__
+        return FixtureExecution(
+            execution_status="failed",
+            provenance="isolated_artifact_executed",
+            errors=(error,),
+            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            **common,
+        )
+
+
 class StaticValidator:
     @staticmethod
     def validate(proposal: Proposal | dict[str, Any]) -> dict[str, Any]:
@@ -390,6 +531,7 @@ class EvaluationService:
             if existing:
                 return self.report(existing)
         run_id = new_id("eval")
+        started_at = utc_now()
         try:
             with self.db.transaction() as connection:
                 connection.execute(
@@ -399,8 +541,9 @@ class EvaluationService:
                         candidate_fingerprint, suite_hash, mode, environment_fingerprint,
                         status, started_at, execution_manifest_hash, execution_manifest_json,
                         runner_id, runner_version, runner_config_hash, oracle_id, oracle_version,
-                        baseline_artifact_hash, candidate_artifact_hash, evidence_tier
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        baseline_artifact_hash, candidate_artifact_hash, evidence_tier,
+                        lease_until, attempt_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
                     (
                         run_id,
@@ -412,7 +555,7 @@ class EvaluationService:
                         context.suite_hash,
                         mode,
                         context.environment_fingerprint,
-                        utc_now(),
+                        started_at,
                         context.manifest_hash,
                         _canonical(context.manifest),
                         context.runner_id,
@@ -423,14 +566,20 @@ class EvaluationService:
                         context.baseline.artifact_hash,
                         context.candidate.artifact_hash,
                         "STATIC_ONLY",
+                        _lease_until(),
                     ),
                 )
         except sqlite3.IntegrityError:
             existing = self._run_for_manifest(context.manifest_hash)
-            if existing:
+            if not existing:
+                raise
+            if self._retry_or_claim_manifest(existing):
+                run_id = existing
+            else:
+                # A live owner may still be executing. Returning its report is
+                # deliberately non-success: callers see status=running and no verdict.
                 return self.report(existing)
-            raise
-        if mode != "fixture":
+        if mode not in {"fixture", "isolated"}:
             self._persist_blocked(run_id, "real task execution is not configured")
             return self.report(run_id)
         validation = candidate.static_validation
@@ -586,6 +735,24 @@ class EvaluationService:
             executable_candidate = ExecutableCandidate(
                 "candidate", candidate_ref, candidate_artifact_hash, candidate.capability_version_id
             )
+        elif mode == "isolated":
+            runner_id = getattr(self.runner, "runner_id", "")
+            runner_version = getattr(self.runner, "runner_version", "")
+            runner_config_hash = getattr(self.runner, "runner_config_hash", "")
+            oracle_id = "isolated-file-oracle"
+            oracle_version = "1"
+            baseline_ref = str(getattr(self.runner, "baseline_ref", ""))
+            candidate_ref = str(candidate.payload.get("candidate_artifact_ref") or getattr(self.runner, "candidate_ref", ""))
+            baseline_hash = str(getattr(self.runner, "baseline_artifact_hash", "") or "")
+            candidate_artifact_hash = str(candidate.payload.get("candidate_artifact_hash") or "")
+            hash_for = getattr(self.runner, "artifact_hash", None)
+            if callable(hash_for):
+                baseline_hash = baseline_hash or str(hash_for("baseline") or "")
+                candidate_artifact_hash = candidate_artifact_hash or str(hash_for("candidate") or "")
+            baseline = ExecutableCandidate("baseline", baseline_ref, baseline_hash, candidate.capability_version_id)
+            executable_candidate = ExecutableCandidate(
+                "candidate", candidate_ref, candidate_artifact_hash, candidate.capability_version_id
+            )
         else:
             runner_id = "real-task-runner"
             runner_version = "unconfigured"
@@ -620,11 +787,13 @@ class EvaluationService:
             "runner_config_hash": runner_config_hash,
             "environment_fingerprint": environment,
             "mode": mode,
+            "baseline_artifact_ref": baseline.immutable_artifact_ref,
+            "candidate_artifact_ref": executable_candidate.immutable_artifact_ref,
             "inputs": inputs,
             "legacy_inputs": legacy_inputs,
         }
-        supported = mode == "fixture" and all(self.runner.supports(self._case_input(case)) for case in suite.cases)
-        cacheable = mode == "fixture" and bool(executable_candidate.immutable_artifact_ref and executable_candidate.artifact_hash)
+        supported = mode in {"fixture", "isolated"} and all(self.runner.supports(self._case_input(case)) for case in suite.cases)
+        cacheable = mode in {"fixture", "isolated"} and bool(executable_candidate.immutable_artifact_ref and executable_candidate.artifact_hash)
         cacheable = cacheable and supported and all(value is None for value in legacy_inputs.values())
         if not cacheable:
             manifest["uncacheable_nonce"] = new_id("manifest")
@@ -687,7 +856,7 @@ class EvaluationService:
                 WHERE execution_manifest_hash = ?
                   AND status = 'completed'
                   AND verdict IN ('IMPROVED', 'EQUIVALENT', 'REGRESSED')
-                  AND evidence_tier IN ('FIXTURE_EXECUTED', 'REAL_TASK_EXECUTED')
+                  AND evidence_tier IN ('FIXTURE_EXECUTED', 'ISOLATED_ARTIFACT_EXECUTED', 'REAL_TASK_EXECUTED')
                 ORDER BY started_at LIMIT 1
                 """,
                 (manifest_hash,),
@@ -701,6 +870,54 @@ class EvaluationService:
                 (manifest_hash,),
             ).fetchone()
         return str(row[0]) if row else None
+
+    def _retry_or_claim_manifest(self, run_id: str) -> bool:
+        """Claim only a retryable or expired row; never reuse a live run as success."""
+
+        now = utc_now()
+        with self.db.transaction() as connection:
+            row = connection.execute(
+                "SELECT status, lease_until FROM evaluation_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            status = str(row["status"])
+            lease_until = str(row["lease_until"] or "")
+            if status == "running":
+                try:
+                    live = datetime.fromisoformat(lease_until) > datetime.now(timezone.utc)
+                except ValueError:
+                    live = False
+                if live:
+                    return False
+            elif status not in {"inconclusive", "blocked_env", "static_failed"}:
+                return False
+            connection.execute(
+                "DELETE FROM evaluation_case_results WHERE run_id = ?",
+                (run_id,),
+            )
+            connection.execute(
+                "DELETE FROM evaluation_verdicts WHERE run_id = ?",
+                (run_id,),
+            )
+            updated = connection.execute(
+                """
+                UPDATE evaluation_runs
+                SET status = 'running', verdict = '', error_type = '',
+                    started_at = ?, finished_at = '', evidence_tier = 'STATIC_ONLY',
+                    lease_until = '', attempt_count = attempt_count + 1
+                WHERE run_id = ?
+                """,
+                (now, run_id),
+            )
+            if updated.rowcount != 1:
+                return False
+            connection.execute(
+                "UPDATE evaluation_runs SET lease_until = ? WHERE run_id = ?",
+                (_lease_until(), run_id),
+            )
+            return True
 
     def _execute(
         self,
@@ -781,7 +998,11 @@ class EvaluationService:
     ) -> EvaluationCaseResult:
         expected = case.expected_behavior.get("expected_output")
         valid_output = isinstance(execution.output, dict)
-        trusted = execution.execution_status == "completed" and execution.provenance in {"fixture_executed", "real_executed"}
+        trusted = execution.execution_status == "completed" and execution.provenance in {
+            "fixture_executed",
+            "real_executed",
+            "isolated_artifact_executed",
+        }
         success = trusted and valid_output and _canonical(execution.output) == _canonical(expected)
         metric = metrics.get((case.case_id, side), metrics.get(case.case_id, {}))
         metric = metric if isinstance(metric, dict) else {}
@@ -871,6 +1092,8 @@ class EvaluationService:
 
     @staticmethod
     def _evidence_tier(results: list[EvaluationCaseResult]) -> str:
+        if results and all(item.provenance == "isolated_artifact_executed" for item in results):
+            return _ISOLATED_EVIDENCE
         if results and all(item.provenance == "real_executed" for item in results):
             return "REAL_TASK_EXECUTED"
         if results and all(item.provenance == "fixture_executed" for item in results):
@@ -883,7 +1106,7 @@ class EvaluationService:
         status = "completed" if verdict in {"IMPROVED", "EQUIVALENT", "REGRESSED"} else "inconclusive"
         with self.db.transaction() as connection:
             connection.execute(
-                "UPDATE evaluation_runs SET status = ?, verdict = ?, evidence_tier = ?, finished_at = ? WHERE run_id = ?",
+                "UPDATE evaluation_runs SET status = ?, verdict = ?, evidence_tier = ?, finished_at = ?, lease_until = '' WHERE run_id = ?",
                 (status, verdict, evidence_tier, utc_now(), run_id),
             )
 
@@ -905,7 +1128,7 @@ class EvaluationService:
                 ),
             )
             connection.execute(
-                "UPDATE evaluation_runs SET status = 'blocked_env', verdict = ?, evidence_tier = ?, error_type = ?, finished_at = ? WHERE run_id = ?",
+                "UPDATE evaluation_runs SET status = 'blocked_env', verdict = ?, evidence_tier = ?, error_type = ?, finished_at = ?, lease_until = '' WHERE run_id = ?",
                 (verdict.verdict, verdict.evidence_tier, error, utc_now(), run_id),
             )
         return verdict
@@ -928,7 +1151,7 @@ class EvaluationService:
                 ),
             )
             connection.execute(
-                "UPDATE evaluation_runs SET status = 'static_failed', verdict = ?, evidence_tier = ?, error_type = ?, finished_at = ? WHERE run_id = ?",
+                "UPDATE evaluation_runs SET status = 'static_failed', verdict = ?, evidence_tier = ?, error_type = ?, finished_at = ?, lease_until = '' WHERE run_id = ?",
                 (verdict.verdict, verdict.evidence_tier, error_type, utc_now(), run_id),
             )
 

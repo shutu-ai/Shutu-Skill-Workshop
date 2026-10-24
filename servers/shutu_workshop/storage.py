@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 7
+    latest_schema_version = 8
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -108,6 +108,11 @@ class M1Database:
                 self._create_m43_evaluation_integrity_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (7, datetime('now'))"
+                )
+            if 8 not in applied:
+                self._create_m5_release_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (8, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -668,3 +673,108 @@ class M1Database:
             "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_manifest "
             "ON evaluation_runs(execution_manifest_hash, status)"
         )
+
+    @staticmethod
+    def _create_m5_release_schema(connection: sqlite3.Connection) -> None:
+        """Persist release gates and offline observations without rewriting M0-M4 data."""
+
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(evaluation_runs)")}
+        if "lease_until" not in run_columns:
+            connection.execute(
+                "ALTER TABLE evaluation_runs ADD COLUMN lease_until TEXT NOT NULL DEFAULT ''"
+            )
+        if "attempt_count" not in run_columns:
+            connection.execute(
+                "ALTER TABLE evaluation_runs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+            )
+
+        for statement in (
+            """
+            CREATE TABLE IF NOT EXISTS release_plans (
+                plan_id TEXT PRIMARY KEY,
+                proposal_id TEXT NOT NULL,
+                evaluation_run_id TEXT NOT NULL,
+                target_scope TEXT NOT NULL,
+                target_skill_name TEXT NOT NULL,
+                target_root TEXT NOT NULL,
+                candidate_root TEXT NOT NULL,
+                baseline_root TEXT NOT NULL,
+                baseline_artifact_hash TEXT NOT NULL,
+                candidate_artifact_hash TEXT NOT NULL,
+                target_current_hash TEXT NOT NULL,
+                evaluation_manifest_hash TEXT NOT NULL,
+                state TEXT NOT NULL,
+                plan_hash TEXT NOT NULL UNIQUE,
+                plan_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                row_version INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS release_approvals (
+                approval_id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES release_plans(plan_id),
+                reviewer TEXT NOT NULL,
+                approved_at TEXT NOT NULL,
+                expected_plan_hash TEXT NOT NULL,
+                candidate_artifact_hash TEXT NOT NULL,
+                target_current_hash TEXT NOT NULL,
+                evaluation_manifest_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                UNIQUE(plan_id, expected_plan_hash)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS release_links (
+                release_id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL UNIQUE REFERENCES release_plans(plan_id),
+                idempotency_key TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                target_scope TEXT NOT NULL,
+                target_skill_name TEXT NOT NULL,
+                candidate_artifact_hash TEXT NOT NULL,
+                baseline_artifact_hash TEXT NOT NULL,
+                target_current_hash TEXT NOT NULL,
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                m0_operation_id TEXT NOT NULL DEFAULT '',
+                m0_version_id TEXT NOT NULL DEFAULT '',
+                rollback_version_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS release_plan_events (
+                event_id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES release_plans(plan_id),
+                old_state TEXT NOT NULL,
+                new_state TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS release_observation_runs (
+                observation_id TEXT PRIMARY KEY,
+                release_id TEXT NOT NULL REFERENCES release_links(release_id),
+                window_hash TEXT NOT NULL,
+                window_json TEXT NOT NULL,
+                conclusion TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(release_id, window_hash)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_release_plans_state ON release_plans(state, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_release_plans_proposal ON release_plans(proposal_id, evaluation_run_id)",
+            "CREATE INDEX IF NOT EXISTS idx_release_links_status ON release_links(status, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_release_plan_events_plan ON release_plan_events(plan_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_release_observation_release ON release_observation_runs(release_id, created_at)",
+        ):
+            connection.execute(statement)
