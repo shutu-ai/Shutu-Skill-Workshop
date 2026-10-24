@@ -85,12 +85,12 @@ class M1CapabilityTraceTests(unittest.TestCase):
             versions = [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
         self.assertTrue({"issues", "proposals", "versions", "release_operations"}.issubset(tables))
         self.assertTrue({"capabilities", "capability_versions", "traces", "trace_events"}.issubset(tables))
-        self.assertEqual(versions, [1, 2])
+        self.assertEqual(versions, [1, 2, 3])
         M1Database(self.workspace)
         with self.db.connection() as connection:
             self.assertEqual(
                 [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")],
-                [1, 2],
+                [1, 2, 3],
             )
         from plugins.daagent.skill_workshop.store import WorkshopStore
 

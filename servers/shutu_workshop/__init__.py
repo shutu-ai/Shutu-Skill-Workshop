@@ -17,11 +17,30 @@ from .models import (
 from .redaction import RedactionPolicy
 from .storage import M1Database
 from .traces import TraceStore
+from .adapters import AdapterDescriptor, AdapterEvent, AdapterHealth, BaseAdapter, CaptureResult
+from .adapters.opencode import OpenCodeAdapter
+from .capture import Checkpoint, CheckpointedJSONL
+from .observers.mcp import (
+    HTTPProxyResult,
+    McpTraceRecorder,
+    ObserverReport,
+    StdioObserver,
+    StreamableHTTPObserver,
+)
 
 __all__ = [
     "Capability",
     "CapabilityRegistry",
     "CapabilityVersion",
+    "AdapterDescriptor",
+    "AdapterEvent",
+    "AdapterHealth",
+    "BaseAdapter",
+    "CaptureResult",
+    "CodexAdapter",
+    "OpenCodeAdapter",
+    "Checkpoint",
+    "CheckpointedJSONL",
     "ConflictError",
     "IngestResult",
     "IngestValidationError",
@@ -32,8 +51,21 @@ __all__ = [
     "TraceEvent",
     "TraceIngestor",
     "TraceStore",
+    "HTTPProxyResult",
+    "McpTraceRecorder",
+    "ObserverReport",
+    "StdioObserver",
+    "StreamableHTTPObserver",
     "ValidationError",
     "content_hash",
     "create_ingest_server",
     "serve_in_thread",
 ]
+
+
+def __getattr__(name: str):
+    if name == "CodexAdapter":
+        from .adapters.codex import CodexAdapter
+
+        return CodexAdapter
+    raise AttributeError(name)

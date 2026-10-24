@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 2
+    latest_schema_version = 3
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -83,6 +83,11 @@ class M1Database:
                 self._create_m1_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (2, datetime('now'))"
+                )
+            if 3 not in applied:
+                self._create_m2_compat_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (3, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -192,6 +197,7 @@ class M1Database:
                 trace_id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL,
                 adapter_id TEXT NOT NULL,
+                adapter_version TEXT NOT NULL DEFAULT 'unknown',
                 parent_trace_id TEXT NOT NULL DEFAULT '',
                 session_id TEXT NOT NULL DEFAULT '',
                 turn_id TEXT NOT NULL DEFAULT '',
@@ -200,7 +206,7 @@ class M1Database:
                 status TEXT NOT NULL,
                 environment_fingerprint TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT '',
-                observation_completeness TEXT NOT NULL,
+                observation_completeness TEXT NOT NULL DEFAULT 'unknown',
                 redaction_policy_version TEXT NOT NULL,
                 token_summary_json TEXT NOT NULL,
                 cost_summary_json TEXT NOT NULL,
@@ -224,11 +230,15 @@ class M1Database:
                 capability_id TEXT NOT NULL DEFAULT '',
                 capability_version_id TEXT NOT NULL DEFAULT '',
                 adapter_event_id TEXT NOT NULL DEFAULT '',
+                request_id TEXT NOT NULL DEFAULT '',
+                tool_name TEXT NOT NULL DEFAULT '',
+                transport TEXT NOT NULL DEFAULT '',
+                observation_source TEXT NOT NULL DEFAULT '',
                 retry_of_event_id TEXT NOT NULL DEFAULT '',
                 attempt_index INTEGER,
                 status TEXT NOT NULL DEFAULT '',
                 error_type TEXT NOT NULL DEFAULT '',
-                correlation_quality TEXT NOT NULL,
+                correlation_quality TEXT NOT NULL DEFAULT 'unknown',
                 payload_json TEXT NOT NULL,
                 source_metadata_json TEXT NOT NULL,
                 payload_digest TEXT NOT NULL,
@@ -263,4 +273,37 @@ class M1Database:
                 ON trace_events(trace_id, adapter_event_id)
                 WHERE adapter_event_id <> ''
             """
+        )
+
+    @staticmethod
+    def _create_m2_compat_schema(connection: sqlite3.Connection) -> None:
+        """Add the M2 evidence fields without rebuilding or deleting M1 data."""
+
+        trace_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(traces)")
+        }
+        if "adapter_version" not in trace_columns:
+            connection.execute(
+                "ALTER TABLE traces ADD COLUMN adapter_version TEXT NOT NULL DEFAULT 'unknown'"
+            )
+
+        event_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(trace_events)")
+        }
+        for name in ("request_id", "tool_name", "transport", "observation_source"):
+            if name not in event_columns:
+                connection.execute(
+                    f"ALTER TABLE trace_events ADD COLUMN {name} TEXT NOT NULL DEFAULT ''"
+                )
+
+        # M1 did not have evidence to justify these two optimistic values.
+        connection.execute(
+            "UPDATE traces SET observation_completeness = 'unknown' "
+            "WHERE observation_completeness IN ('', 'complete')"
+        )
+        connection.execute(
+            "UPDATE trace_events SET correlation_quality = 'unknown' "
+            "WHERE correlation_quality IN ('', 'observed')"
         )
