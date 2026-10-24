@@ -1,6 +1,11 @@
 # Workspace-owned runtime state and test output.
 .skill_workshop/
 .test-ws/
+.test-m26/
+.test-m3/
+.test-m4/
+.test-m6/
+.test-m61/
 pytest-cache-files-*/
 __pycache__/
 *.py[cod]

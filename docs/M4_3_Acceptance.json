@@ -1,0 +1,38 @@
+{
+  "BASELINE_HEAD": "1450051b656856a6d076d97e2b96cf88fbfe5c72",
+  "M4_3_STATUS": "PASS",
+  "P0_ORACLE_FALLBACK_REMOVED": "PASS",
+  "P0_OUTPUT_PROVENANCE": "PASS",
+  "P0_EVAL_CACHE_IDENTITY": "PASS",
+  "HOLDOUT_ISOLATION": "PASS",
+  "FIXTURE_RUNNER_EXECUTED": "PASS",
+  "FIXTURE_ARTIFACTS": [
+    "m4-fixture-baseline-v2",
+    "m4-fixture-candidate-v2",
+    "m4-fixture-bad-v2"
+  ],
+  "LEGACY_M4_RESULT_TRUST": "INVALIDATED_FOR_RELEASE",
+  "LEGACY_M4_RESULT": "3/5 -> 5/5 IMPROVED; LEGACY_UNTRUSTED_EVAL",
+  "FIXTURE_VERDICT": "IMPROVED",
+  "FIXTURE_EVIDENCE_TIER": "FIXTURE_EXECUTED",
+  "BAD_CANDIDATE_VERDICT": "REGRESSED",
+  "DIRECT_OUTPUT_VERDICT": "INCONCLUSIVE",
+  "MISSING_HOLDOUT_VERDICT": "INCONCLUSIVE",
+  "REAL_TASK_EVAL": "BLOCKED_ENV",
+  "LLM_REAL_RUN": "BLOCKED_ENV",
+  "M0_M1_M2_M26_M3_M4_REGRESSION": "PASS",
+  "TESTS": "60/60, skipped=0",
+  "GIT_PUSH": "VERIFIED_IN_FINAL_REPORT",
+  "COMMIT": null,
+  "REMOTE_HEAD": null,
+  "DOCS": [
+    "docs/M4_3_Evaluation_Integrity_RCA.md",
+    "docs/M4_3_Evaluation_Integrity_Design.md",
+    "docs/M4_3_Evaluation_Integrity_Acceptance.md",
+    "docs/M4_3_Acceptance.json",
+    "docs/M4_Acceptance.json",
+    "docs/M4_Operations_Runbook.md"
+  ],
+  "KNOWN_LIMITATIONS": "No real LLM endpoint, real Agent Runner, OpenCode tool hook, or official MCP SDK interoperability proof; M4.3 proves only the isolated local Fixture evaluation integrity closure.",
+  "NEXT_STAGE": "M5_RELEASE_AND_POST_RELEASE_OBSERVATION"
+}

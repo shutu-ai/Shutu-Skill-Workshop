@@ -72,7 +72,7 @@ class TraceStore:
         ended_at: str = "",
         *,
         task_result: str = "unknown",
-        observation_completeness: str = "complete",
+        observation_completeness: str = "unknown",
     ) -> Trace:
         if status not in Trace.STATUSES:
             raise ValidationError("unsupported trace status")
@@ -84,7 +84,7 @@ class TraceStore:
             status=status,
             ended_at=ended_at or existing.ended_at or utc_now(),
             task_result=task_result or "unknown",
-            observation_completeness=observation_completeness or "complete",
+            observation_completeness=observation_completeness or "unknown",
         )
         with self.db.transaction() as connection:
             connection.execute(
@@ -110,6 +110,30 @@ class TraceStore:
                 (trace_id,),
             ).fetchone()
         return self._trace_from_row(row) if row else None
+
+    def next_event_seq(self, trace_id: str) -> int:
+        """Return the next sequence without keeping an unbounded process cache."""
+
+        with self.db.connection() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(seq), -1) + 1 AS next_seq FROM trace_events WHERE trace_id = ?",
+                (trace_id,),
+            ).fetchone()
+        return int(row["next_seq"])
+
+    def find_event_by_source(self, trace_id: str, adapter_event_id: str) -> TraceEvent | None:
+        if not adapter_event_id:
+            return None
+        with self.db.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM trace_events
+                WHERE trace_id = ? AND adapter_event_id = ?
+                ORDER BY rowid ASC LIMIT 1
+                """,
+                (trace_id, adapter_event_id),
+            ).fetchone()
+        return self._event_from_row(row) if row else None
 
     get_trace = get
 
@@ -213,11 +237,12 @@ class TraceStore:
         return replace(
             trace,
             redaction_policy_version=trace.redaction_policy_version or self.policy.version,
+            adapter_version=trace.adapter_version or "unknown",
             token_summary=self.policy.redact_metadata(trace.token_summary),
             cost_summary=self.policy.redact_metadata(trace.cost_summary),
             metadata=self.policy.redact_metadata(trace.metadata),
             task_result=trace.task_result or "unknown",
-            observation_completeness=trace.observation_completeness or "complete",
+            observation_completeness=trace.observation_completeness or "unknown",
         )
 
     def _prepare_event(self, event: TraceEvent) -> TraceEvent:
@@ -230,6 +255,8 @@ class TraceStore:
         if not isinstance(payload, dict):
             raise ValidationError("event payload_json must be an object")
         prepared = replace(event, payload_json=payload, source_metadata=source_metadata)
+        if not prepared.correlation_quality:
+            prepared = replace(prepared, correlation_quality="unknown")
         if prepared.duration_ms is not None and prepared.duration_ms < 0:
             raise ValidationError("duration_ms cannot be negative")
         if prepared.attempt_index is not None and prepared.attempt_index < 0:
@@ -258,6 +285,7 @@ class TraceStore:
             "trace_id": trace.trace_id,
             "workspace_id": trace.workspace_id,
             "adapter_id": trace.adapter_id,
+            "adapter_version": trace.adapter_version,
             "parent_trace_id": trace.parent_trace_id,
             "session_id": trace.session_id,
             "turn_id": trace.turn_id,
@@ -386,17 +414,19 @@ class TraceStore:
                 connection.execute(
                     """
                     INSERT INTO traces(
-                        trace_id, workspace_id, adapter_id, parent_trace_id,
+                        trace_id, workspace_id, adapter_id, adapter_version,
+                        parent_trace_id,
                         session_id, turn_id, started_at, ended_at, status,
                         environment_fingerprint, source, observation_completeness,
                         redaction_policy_version, token_summary_json,
                         cost_summary_json, task_result, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         trace.trace_id,
                         trace.workspace_id,
                         trace.adapter_id,
+                        trace.adapter_version,
                         trace.parent_trace_id,
                         trace.session_id,
                         trace.turn_id,
@@ -419,10 +449,11 @@ class TraceStore:
                     INSERT INTO trace_events(
                         event_id, trace_id, seq, span_id, parent_span_id, type,
                         actor, occurred_at, duration_ms, capability_id,
-                        capability_version_id, adapter_event_id, retry_of_event_id,
+                        capability_version_id, adapter_event_id, request_id,
+                        tool_name, transport, observation_source, retry_of_event_id,
                         attempt_index, status, error_type, correlation_quality,
                         payload_json, source_metadata_json, payload_digest
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event.event_id,
@@ -437,6 +468,10 @@ class TraceStore:
                         event.capability_id,
                         event.capability_version_id,
                         event.adapter_event_id,
+                        event.request_id,
+                        event.tool_name,
+                        event.transport,
+                        event.observation_source,
                         event.retry_of_event_id,
                         event.attempt_index,
                         event.status,
@@ -470,6 +505,10 @@ class TraceStore:
             "capability_id": row["capability_id"],
             "capability_version_id": row["capability_version_id"],
             "adapter_event_id": row["adapter_event_id"],
+            "request_id": row["request_id"],
+            "tool_name": row["tool_name"],
+            "transport": row["transport"],
+            "observation_source": row["observation_source"],
             "retry_of_event_id": row["retry_of_event_id"],
             "attempt_index": row["attempt_index"],
             "status": row["status"],
@@ -494,6 +533,7 @@ class TraceStore:
             trace_id=row["trace_id"],
             workspace_id=row["workspace_id"],
             adapter_id=row["adapter_id"],
+            adapter_version=row["adapter_version"],
             parent_trace_id=row["parent_trace_id"],
             session_id=row["session_id"],
             turn_id=row["turn_id"],
@@ -525,6 +565,10 @@ class TraceStore:
             capability_id=row["capability_id"],
             capability_version_id=row["capability_version_id"],
             adapter_event_id=row["adapter_event_id"],
+            request_id=row["request_id"],
+            tool_name=row["tool_name"],
+            transport=row["transport"],
+            observation_source=row["observation_source"],
             retry_of_event_id=row["retry_of_event_id"],
             attempt_index=row["attempt_index"],
             status=row["status"],

@@ -1,0 +1,62 @@
+{
+  "stage": "M5_RELEASE_AND_POST_RELEASE_OBSERVATION",
+  "baseline_head": "a39744bd0dda8db1476a4f5382418413698a12da",
+  "status_scope": "isolated_workspace_release_closure",
+  "m5_status": "PASS",
+  "gates": {
+    "M5_0_ELIGIBILITY": "PASS",
+    "M5_0_RUNNING_CACHE_RACE": "PASS",
+    "M5_1_REAL_FILE_ARTIFACT": "PASS",
+    "M5_1_FILEBACKED_EVAL": "PASS",
+    "M5_2_APPROVAL_AND_DRY_RUN": "PASS",
+    "M5_3_M0_JOURNAL_REUSE": "PASS",
+    "M5_3_CRASH_RECOVERY": "PASS",
+    "M5_3_ROLLBACK": "PASS",
+    "M5_4_POST_RELEASE_OBSERVATION": "PASS",
+    "M5_4_INSUFFICIENT_EVIDENCE_GUARD": "PASS"
+  },
+  "evidence": {
+    "fixture_or_simulated": [
+      "SIMULATED_TRACE is explicitly labelled and is not real Agent evidence",
+      "isolated file runner uses repository-local Python and no external target"
+    ],
+    "isolated_artifact_evidence_tier": "ISOLATED_ARTIFACT_EXECUTED",
+    "positive_verdict": "IMPROVED",
+    "post_release_signals": ["INSUFFICIENT_EVIDENCE", "IMPROVEMENT_SIGNAL", "REGRESSION_SIGNAL"],
+    "m0_bridge": "SkillWorkshop.test_proposal/apply_proposal/rollback"
+  },
+  "tests": {
+    "m5_test_module": "tests.test_m5_release_observation",
+    "expected_m5_tests": 5,
+    "full_suite_expected": 65,
+    "skipped": 0
+  },
+  "real_world_boundaries": {
+    "REAL_AGENT_CANDIDATE_EVAL": "BLOCKED_ENV",
+    "REAL_PRODUCTION_TARGET_RELEASE": "NOT_EXECUTED",
+    "OPENCODE_REAL_TOOL_HOOK": "BLOCKED_ENV",
+    "OFFICIAL_MCP_SDK_INTEROP": "UNVERIFIED",
+    "LEGACY_M4_RESULT_TRUST": "INVALIDATED_FOR_RELEASE"
+  },
+  "release": {
+    "target_scope": "isolated_workspace",
+    "candidate_artifact_hash": "6882376265c0bef82c029b875494bab2d45b92dadb297a9bd306fc6e4d8d7b77",
+    "baseline_artifact_hash": "d71877ccb4173ee2ff7c5814411c9f3aaf95cc11426e93b6dfade5b7ed028e11",
+    "rollback_matches_baseline": "PASS",
+    "commit": null,
+    "remote_head": null,
+    "git_push": "VERIFIED_IN_FINAL_REPORT"
+  },
+  "docs": [
+    "docs/M5_Release_and_Observation_Design.md",
+    "docs/M5_Release_and_Observation_Acceptance.md",
+    "docs/M5_Operations_Runbook.md"
+  ],
+  "known_limitations": [
+    "No real Agent/OpenCode/MCP production target was executed",
+    "Observation demo traces are SIMULATED_TRACE and not causal proof",
+    "File-backed subprocess is a bounded local runner, not a general sandbox",
+    "Token and cost metrics remain null without real observations"
+  ],
+  "next_stage": "M6_REAL_WORLD_ADAPTER_VALIDATION_AND_OPTIMIZATION_FEEDBACK"
+}

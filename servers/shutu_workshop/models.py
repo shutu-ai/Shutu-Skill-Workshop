@@ -70,6 +70,7 @@ class Trace:
     trace_id: str = field(default_factory=lambda: new_id("trace"))
     workspace_id: str = ""
     adapter_id: str = ""
+    adapter_version: str = "unknown"
     parent_trace_id: str = ""
     session_id: str = ""
     turn_id: str = ""
@@ -78,7 +79,7 @@ class Trace:
     status: str = "running"
     environment_fingerprint: str = ""
     source: str = ""
-    observation_completeness: str = "complete"
+    observation_completeness: str = "unknown"
     redaction_policy_version: str = "m1-default-v1"
     token_summary: dict[str, Any] = field(default_factory=dict)
     cost_summary: dict[str, Any] = field(default_factory=dict)
@@ -111,11 +112,15 @@ class TraceEvent:
     capability_id: str = ""
     capability_version_id: str = ""
     adapter_event_id: str = ""
+    request_id: str = ""
+    tool_name: str = ""
+    transport: str = ""
+    observation_source: str = ""
     retry_of_event_id: str = ""
     attempt_index: int | None = None
     status: str = ""
     error_type: str = ""
-    correlation_quality: str = "observed"
+    correlation_quality: str = "unknown"
     payload_json: dict[str, Any] = field(default_factory=dict)
     source_metadata: dict[str, Any] = field(default_factory=dict)
 

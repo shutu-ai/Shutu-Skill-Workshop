@@ -1,0 +1,55 @@
+{
+  "BASELINE_HEAD": "3be9b51",
+  "FINAL_HEAD": null,
+  "REMOTE_HEAD": null,
+  "M6_1_STATUS": "PARTIAL",
+  "PROVIDER_AUTH_PRECHECK": "BLOCKED_ENV",
+  "CODEX_REAL_TEXT_RESPONSE": "BLOCKED_ENV",
+  "REAL_CODEX_MCP_INITIALIZE": "BLOCKED_ENV",
+  "REAL_CODEX_MCP_TOOLS_LIST": "BLOCKED_ENV",
+  "REAL_CODEX_MCP_TOOLS_CALL": "BLOCKED_ENV",
+  "BASELINE_ARTIFACT_ACTIVATION": "PASS",
+  "CANDIDATE_ARTIFACT_ACTIVATION": "PASS",
+  "DECLARED_VS_ACTUAL_HASH_NEGATIVE_TEST": "PASS",
+  "REAL_AGENT_PAIRED_CASES": 3,
+  "REAL_AGENT_INDEPENDENT_ORACLE": "BLOCKED_ENV",
+  "REAL_AGENT_PAIR_EXECUTION": "BLOCKED_ENV",
+  "REAL_AGENT_OPTIMIZATION_VERDICT": "BLOCKED_ENV",
+  "HISTORICAL_BEFORE_BINDING": "PASS",
+  "REAL_OBSERVATION_FEEDBACK": "PARTIAL",
+  "OPEN_CODE_REAL_TOOL_HOOK": "BLOCKED_ENV",
+  "OFFICIAL_MCP_SDK_INTEROP": "UNVERIFIED",
+  "FALSE_EXACT_JOIN_COUNT": 0,
+  "PRODUCTION_TARGET_RELEASE": "NOT_EXECUTED",
+  "M0_M6_REGRESSION": "PASS",
+  "TESTS": {
+    "full_suite": "79/79",
+    "skipped": 0,
+    "m61_targeted": "9/9"
+  },
+  "GIT_PUSH": "PENDING",
+  "COMMIT": null,
+  "DOCS": [
+    "docs/M6_1_Provider_Auth_Probe.md",
+    "docs/M6_1_Artifact_Activation_And_Paired_Experiment_Design.md",
+    "docs/M6_1_Real_Agent_Closure_Acceptance.md",
+    "docs/M6_1_Operations_Runbook.md",
+    "docs/M6_1_Acceptance.json"
+  ],
+  "NEXT_STAGE": "Authenticate an explicitly isolated Codex HOME, rerun provider preflight, then rerun all three paired cases and require non-zero Codex MCP call/result refs plus the independent Oracle before claiming optimization.",
+  "EVIDENCE": {
+    "pair_report": ".test-m61/evidence/m61-pair-final.json",
+    "raw_task_inputs_persisted": false,
+    "credentials_persisted": false,
+    "codex_cli": "0.163.0",
+    "attempted_cases": 3,
+    "attempted_side_runs": 6,
+    "codex_mcp_tool_calls": 0,
+    "activation_statuses": [
+      "VERIFIED"
+    ],
+    "execution_statuses": [
+      "blocked_env"
+    ]
+  }
+}
