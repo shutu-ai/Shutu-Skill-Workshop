@@ -113,10 +113,12 @@ McpObserver:
 
 `ObserverHandle` 负责 stdio 或 Streamable HTTP 的转发/关闭，必须保持协议字节、JSON-RPC id 和通知顺序；脱敏摘要只写 Trace。`fault-injection` 是显式评估模式，不能成为默认行为。
 
-## 5. M1、M0 与后续边界
+## 5. M3、M1、M0 与后续边界
 
 - M0 继续负责 Proposal 测试指纹、Release Journal、锁和恢复；M1 的 `servers/shutu_workshop` 通过同一 `.skill_workshop/state.db` 做 additive migration，不改写 M0 门面。
 - M1 只提供模拟来源的 JSONL/loopback ingest；夹具成功标为 `SIMULATED_PASS`，不宣称真实 Codex/OpenCode/MCP 接入。
 - M1 已以 SQLite additive migration 承载 CapabilityVersion、Trace、TraceEvent，并提供 JSONL/HTTP 模拟摄取；下一步再做真实 JSONL/宿主 Adapter 和只读 MCP Observer。
 - 现有 `SkillWorkshop.snapshot_skill/list_versions` 将来通过兼容 service 映射到 Capability，但 CLI `snapshot`、`versions`、`apply`、`rollback` 仍保持原入口。
 - ReleaseService 是唯一文件发布入口；Adapter reload/ack 和发布后 observation 不应绕过 Journal。
+- M3 已在同一 `state.db` 上以 v4 additive migration 提供确定性 RuleDetector、Issue/Occurrence 账本、checkpoint、状态历史和本地 CLI。M3 只记录 evidence-backed finding 与保守 owner hypothesis，不产生 LLM 诊断、自动修复或发布。
+- M4 的最小输入是 `DiagnosisService.show_issue()` 返回的 Issue、Occurrence、EvidenceRef、unknown fields 和 capability version refs；M4 负责提案/评估边界，不能把 M3 的 hypothesis 当成 verified cause。

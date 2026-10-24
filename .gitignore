@@ -2,6 +2,7 @@
 .skill_workshop/
 .test-ws/
 .test-m26/
+.test-m3/
 pytest-cache-files-*/
 __pycache__/
 *.py[cod]

@@ -1,0 +1,18 @@
+{
+  "baseline_head": "137e25da7c3b5ce7c4f8195e5bd40da9f15ed8e3",
+  "m3_status": "PARTIAL",
+  "rules": ["R01", "R02", "R03", "R04", "R05", "R06"],
+  "schema_migration": "PASS",
+  "real_codex_success": "PASS",
+  "real_codex_failure_detection": "PASS",
+  "real_opencode_tool_hook": "BLOCKED_ENV",
+  "official_mcp_sdk_interop": "UNVERIFIED",
+  "tests": "48/48, skipped=0",
+  "analysis_overhead": "n=30; total=728.374ms; per_trace=24.279ms; local synthetic measurement",
+  "known_limitations": [
+    "OpenCode provider did not emit a real tool hook in M2.6",
+    "Context7 proxy probe returned no usable result",
+    "No compatible official MCP SDK was installed"
+  ],
+  "next_stage": "M4_DIAGNOSIS_PROPOSAL_AND_EVALUATION"
+}

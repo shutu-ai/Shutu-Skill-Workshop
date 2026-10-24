@@ -28,6 +28,22 @@ from .observers.mcp import (
     StdioObserver,
     StreamableHTTPObserver,
 )
+from .diagnostics import (
+    AnalyzeResult,
+    AttributionHypothesis,
+    BatchResult,
+    ConcurrentUpdateError,
+    DiagnosisService,
+    DetectorContext,
+    EvidenceRef,
+    Issue,
+    IssueDetails,
+    Occurrence,
+    RuleDetector,
+    RuleFinding,
+    RuleRegistry,
+    RuleSpec,
+)
 
 __all__ = [
     "Capability",
@@ -63,6 +79,20 @@ __all__ = [
     "content_hash",
     "create_ingest_server",
     "serve_in_thread",
+    "AnalyzeResult",
+    "AttributionHypothesis",
+    "BatchResult",
+    "ConcurrentUpdateError",
+    "DiagnosisService",
+    "DetectorContext",
+    "EvidenceRef",
+    "Issue",
+    "IssueDetails",
+    "Occurrence",
+    "RuleDetector",
+    "RuleFinding",
+    "RuleRegistry",
+    "RuleSpec",
 ]
 
 

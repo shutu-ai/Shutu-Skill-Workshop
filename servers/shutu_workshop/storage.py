@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 3
+    latest_schema_version = 4
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -88,6 +88,11 @@ class M1Database:
                 self._create_m2_compat_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (3, datetime('now'))"
+                )
+            if 4 not in applied:
+                self._create_m3_diagnostics_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (4, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -307,3 +312,124 @@ class M1Database:
             "UPDATE trace_events SET correlation_quality = 'unknown' "
             "WHERE correlation_quality IN ('', 'observed')"
         )
+
+    @staticmethod
+    def _create_m3_diagnostics_schema(connection: sqlite3.Connection) -> None:
+        """Add the diagnosis ledger without changing the M0/M1/M2 tables."""
+
+        for statement in (
+            """
+            CREATE TABLE IF NOT EXISTS analysis_runs (
+                run_id TEXT PRIMARY KEY,
+                detector_version TEXT NOT NULL,
+                ruleset_fingerprint TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                trace_count INTEGER NOT NULL DEFAULT 0,
+                findings_count INTEGER NOT NULL DEFAULT 0,
+                skipped_count INTEGER NOT NULL DEFAULT 0,
+                errors_summary TEXT NOT NULL DEFAULT '',
+                environment_fingerprint TEXT NOT NULL DEFAULT ''
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS issue_clusters (
+                issue_id TEXT PRIMARY KEY,
+                dedup_key TEXT NOT NULL UNIQUE,
+                rule_id TEXT NOT NULL,
+                rule_version TEXT NOT NULL,
+                category TEXT NOT NULL,
+                normalized_signature TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                primary_capability_id TEXT NOT NULL DEFAULT '',
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                occurrence_count INTEGER NOT NULL DEFAULT 0,
+                confidence_grade TEXT NOT NULL DEFAULT 'unknown',
+                primary_owner_hypothesis TEXT NOT NULL,
+                attribution_state TEXT NOT NULL DEFAULT 'hypothesis',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                row_version INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS issue_occurrences (
+                occurrence_id TEXT PRIMARY KEY,
+                issue_id TEXT NOT NULL REFERENCES issue_clusters(issue_id) ON DELETE CASCADE,
+                finding_fingerprint TEXT NOT NULL UNIQUE,
+                trace_id TEXT NOT NULL REFERENCES traces(trace_id) ON DELETE CASCADE,
+                observed_at TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                rule_version TEXT NOT NULL,
+                capability_id TEXT NOT NULL DEFAULT '',
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                evidence_refs_json TEXT NOT NULL,
+                source_scope_json TEXT NOT NULL,
+                error_fingerprint TEXT NOT NULL DEFAULT '',
+                owner_candidates_json TEXT NOT NULL,
+                unknown_fields_json TEXT NOT NULL,
+                evidence_quality TEXT NOT NULL DEFAULT 'unknown',
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS analysis_checkpoints (
+                trace_id TEXT NOT NULL REFERENCES traces(trace_id) ON DELETE CASCADE,
+                ruleset_fingerprint TEXT NOT NULL,
+                trace_revision_fingerprint TEXT NOT NULL,
+                analyzed_at TEXT NOT NULL,
+                run_id TEXT NOT NULL REFERENCES analysis_runs(run_id),
+                status TEXT NOT NULL,
+                PRIMARY KEY(trace_id, ruleset_fingerprint)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS issue_status_history (
+                history_id TEXT PRIMARY KEY,
+                issue_id TEXT NOT NULL REFERENCES issue_clusters(issue_id) ON DELETE CASCADE,
+                old_status TEXT NOT NULL,
+                new_status TEXT NOT NULL,
+                old_row_version INTEGER NOT NULL,
+                new_row_version INTEGER NOT NULL,
+                changed_at TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT ''
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_analysis_runs_started
+                ON analysis_runs(started_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_clusters_status
+                ON issue_clusters(workspace_id, status, updated_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_clusters_rule
+                ON issue_clusters(rule_id, category, last_seen_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_occurrences_issue
+                ON issue_occurrences(issue_id, observed_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_occurrences_trace
+                ON issue_occurrences(trace_id, observed_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_occurrences_capability
+                ON issue_occurrences(capability_id, capability_version_id);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_analysis_checkpoints_status
+                ON analysis_checkpoints(status, analyzed_at);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_issue_status_history_issue
+                ON issue_status_history(issue_id, changed_at);
+            """,
+        ):
+            connection.execute(statement)

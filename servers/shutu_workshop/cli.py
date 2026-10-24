@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import CapabilityRegistry
+from .diagnostics import DiagnosisService, ISSUE_STATUSES
 from .ingestion import TraceIngestor
 from .models import Capability
 from .traces import TraceStore
@@ -66,6 +67,33 @@ def build_parser() -> argparse.ArgumentParser:
     prune = trace_commands.add_parser("prune")
     prune.add_argument("--before", required=True, help="ISO timestamp; payloads older than it are deleted")
     prune.add_argument("--trace-id")
+
+    diagnose = commands.add_parser("diagnose")
+    diagnose_commands = diagnose.add_subparsers(dest="diagnose_command", required=True)
+    diagnose_commands.add_parser("rules")
+    diagnose_trace = diagnose_commands.add_parser("trace")
+    diagnose_trace.add_argument("trace_id")
+    diagnose_trace.add_argument("--json", action="store_true")
+    diagnose_new = diagnose_commands.add_parser("new")
+    diagnose_new.add_argument("--limit", type=int, default=100)
+    diagnose_new.add_argument("--since")
+    diagnose_new.add_argument("--json", action="store_true")
+
+    issue = commands.add_parser("issue")
+    issue_commands = issue.add_subparsers(dest="issue_command", required=True)
+    issue_list = issue_commands.add_parser("list")
+    issue_list.add_argument("--status", choices=sorted(ISSUE_STATUSES))
+    issue_list.add_argument("--rule-id")
+    issue_list.add_argument("--limit", type=int, default=100)
+    issue_list.add_argument("--json", action="store_true")
+    issue_show = issue_commands.add_parser("show")
+    issue_show.add_argument("issue_id")
+    issue_show.add_argument("--json", action="store_true")
+    issue_status = issue_commands.add_parser("status")
+    issue_status.add_argument("issue_id")
+    issue_status.add_argument("status", choices=sorted(ISSUE_STATUSES))
+    issue_status.add_argument("--expected-row-version", type=int)
+    issue_status.add_argument("--reason", default="cli")
     return parser
 
 
@@ -118,6 +146,36 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
+    if args.command == "diagnose":
+        service = DiagnosisService(args.workspace)
+        if args.diagnose_command == "rules":
+            _print(service.rules())
+        elif args.diagnose_command == "trace":
+            _print(service.analyze_trace(args.trace_id))
+        elif args.diagnose_command == "new":
+            _print(service.analyze_new(limit=args.limit, since=args.since))
+        return 0
+
+    if args.command == "issue":
+        service = DiagnosisService(args.workspace)
+        if args.issue_command == "list":
+            _print(service.list_issues(status=args.status, rule_id=args.rule_id, limit=args.limit))
+        elif args.issue_command == "show":
+            value = service.show_issue(args.issue_id)
+            if value is None:
+                raise SystemExit("issue does not exist")
+            _print(value)
+        elif args.issue_command == "status":
+            _print(
+                service.set_issue_status(
+                    args.issue_id,
+                    args.status,
+                    expected_row_version=args.expected_row_version,
+                    reason=args.reason,
+                )
+            )
+        return 0
+
     ingestor = TraceIngestor(args.workspace)
     if args.trace_command == "import":
         _print(ingestor.import_jsonl(args.jsonl))
@@ -135,4 +193,6 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.trace_command == "prune":
         _print({"deleted_payloads": ingestor.traces.delete_payloads(args.before, trace_id=args.trace_id)})
+        return 0
+
     return 0
