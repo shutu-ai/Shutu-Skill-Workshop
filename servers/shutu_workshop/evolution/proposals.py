@@ -102,7 +102,7 @@ class ProposalService:
                 target_hash=target_hash,
                 category=category,
                 proposal_version=1,
-                status="ready_for_review",
+                status="draft",
                 payload=payload,
                 candidate_hash=candidate_hash,
                 reviewer="",

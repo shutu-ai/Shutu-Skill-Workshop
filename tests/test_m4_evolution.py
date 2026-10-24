@@ -78,11 +78,12 @@ class M4EvolutionTests(unittest.TestCase):
         proposals = ProposalService(self.workspace).create_from_diagnosis(issue_id, report.diagnosis_id)
         self.assertEqual(len(proposals), 1)
         proposal_service = ProposalService(self.workspace)
-        accepted = proposal_service.review(
+        ready = proposal_service.review(
             proposals[0].proposal_id,
-            "accept-for-eval",
+            "ready-for-review",
             expected_row_version=proposals[0].row_version,
         )
+        accepted = proposal_service.review(ready.proposal_id, "accept-for-eval", expected_row_version=ready.row_version)
         self.assertEqual(accepted.status, "accepted_for_evaluation")
 
         evaluation = EvaluationService(self.workspace)
@@ -102,9 +103,11 @@ class M4EvolutionTests(unittest.TestCase):
         report = EvolutionDiagnosisService(self.workspace).diagnose(issue_id)
         proposal_service = ProposalService(self.workspace)
         proposal = proposal_service.create_from_diagnosis(issue_id, report.diagnosis_id)[0]
-        accepted = proposal_service.review(proposal.proposal_id, "accept-for-eval")
+        ready = proposal_service.review(proposal.proposal_id, "ready-for-review")
+        accepted = proposal_service.review(ready.proposal_id, "accept-for-eval", expected_row_version=ready.row_version)
         revised = proposal_service.revise(accepted.proposal_id, {**accepted.payload, "fixture_outputs": {"mcp_echo": {"bad": True}}})
-        accepted_again = proposal_service.review(revised.proposal_id, "accept-for-eval", expected_row_version=revised.row_version)
+        ready_again = proposal_service.review(revised.proposal_id, "ready-for-review", expected_row_version=revised.row_version)
+        accepted_again = proposal_service.review(ready_again.proposal_id, "accept-for-eval", expected_row_version=ready_again.row_version)
         result = EvaluationService(self.workspace).run(accepted_again.proposal_id, suite=local_fixture_suite(), mode="fixture")
         self.assertEqual(result.verdict.verdict, "REGRESSED")
 

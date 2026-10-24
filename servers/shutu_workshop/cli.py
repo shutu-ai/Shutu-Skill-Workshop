@@ -220,8 +220,20 @@ def main(argv: list[str] | None = None) -> int:
         elif args.evolution_command == "proposals":
             _print(ProposalService(args.workspace).create_from_diagnosis(args.issue_id, args.diagnosis_id))
         elif args.evolution_command == "review":
+            service = ProposalService(args.workspace)
+            current = service.get(args.proposal_id)
+            if current is None:
+                raise SystemExit("proposal does not exist")
+            if args.decision.replace("-", "_") == "accept_for_eval" and current.status == "draft":
+                current = service.review(
+                    args.proposal_id,
+                    "ready-for-review",
+                    reviewer=args.reviewer,
+                    expected_row_version=args.expected_row_version,
+                )
+                args.expected_row_version = current.row_version
             _print(
-                ProposalService(args.workspace).review(
+                service.review(
                     args.proposal_id,
                     args.decision,
                     reviewer=args.reviewer,
