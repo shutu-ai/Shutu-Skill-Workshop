@@ -5,12 +5,13 @@
 """
 
 from .engine import SkillWorkshop, SkillWorkshopError, StaleSkillError
-from .models import EvolutionIssue, Patch, Proposal, SkillSnapshot, Version
+from .models import EvolutionIssue, Patch, Proposal, ReleaseOperation, SkillSnapshot, Version
 
 __all__ = [
     "EvolutionIssue",
     "Patch",
     "Proposal",
+    "ReleaseOperation",
     "SkillSnapshot",
     "SkillWorkshop",
     "SkillWorkshopError",

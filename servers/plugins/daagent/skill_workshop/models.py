@@ -73,6 +73,9 @@ class Proposal:
     target_skill_name: str = ""
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+    test_fingerprint: str = ""
+    accepted_change_digest: str = ""
+    row_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +86,39 @@ class Proposal:
         values = dict(payload)
         values["changes"] = changes
         return cls(**values)
+
+
+@dataclass
+class ReleaseOperation:
+    """Durable cross-filesystem/SQLite release journal entry."""
+
+    kind: str
+    skill_name: str
+    target_skill_name: str
+    base_hash: str
+    source: str
+    message: str
+    parent_version_id: str
+    operation_id: str = field(default_factory=lambda: new_id("release"))
+    proposal_id: str = ""
+    target_version_id: str = ""
+    candidate_hash: str = ""
+    staging_ref: str = ""
+    previous_ref: str = ""
+    status: str = "prepared"
+    error: str = ""
+    attempt_count: int = 0
+    last_reconciled_at: str = ""
+    version_created_at: str = field(default_factory=utc_now)
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ReleaseOperation":
+        return cls(**payload)
 
 
 @dataclass
