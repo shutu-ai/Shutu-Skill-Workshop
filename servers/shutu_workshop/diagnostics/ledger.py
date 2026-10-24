@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 from ..models import TraceEvent, new_id, utc_now
@@ -29,6 +29,13 @@ from .models import (
 ISSUE_STATUSES = frozenset({"open", "acknowledged", "resolved", "ignored"})
 _SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "critical": 3}
 _CONFIDENCE_RANK = {"unknown": 0, "weak": 1, "moderate_evidence": 2, "high_evidence": 3}
+
+
+@dataclass(frozen=True)
+class _TraceSelection:
+    rows: tuple[tuple[int, str, str], ...]
+    scanned: int
+    eligible: int
 
 
 def _canonical(value: Any) -> str:
@@ -104,7 +111,8 @@ class DiagnosisService:
             raise ValueError("limit must be positive")
         detector = self._detector(ruleset)
         ruleset_fingerprint = detector.ruleset_fingerprint()
-        trace_ids = self._trace_ids(limit, since)
+        selection = self._select_trace_ids(limit, since, ruleset_fingerprint)
+        trace_ids = [item[1] for item in selection.rows]
         run_id = self._start_run(detector, ruleset_fingerprint)
         analyzed = skipped = findings = occurrences = duplicates = 0
         errors: list[str] = []
@@ -123,6 +131,8 @@ class DiagnosisService:
             duplicates += result.duplicate_occurrences
         status = "failed" if errors and not analyzed and not skipped else ("partial" if errors else "completed")
         self._finish_run(run_id, status=status, errors=tuple(errors))
+        if selection.rows:
+            self._advance_cursor(ruleset_fingerprint, selection.rows[-1])
         return BatchResult(
             run_id=run_id,
             status=status,
@@ -133,6 +143,9 @@ class DiagnosisService:
             occurrence_count=occurrences,
             duplicate_occurrences=duplicates,
             errors=tuple(errors),
+            scanned=selection.scanned,
+            eligible=selection.eligible,
+            remaining_or_unknown="unknown",
         )
 
     def list_issues(
@@ -153,7 +166,7 @@ class DiagnosisService:
         if limit < 1:
             raise ValueError("limit must be positive")
         query = "SELECT * FROM issue_clusters"
-        conditions: list[str] = []
+        conditions: list[str] = ["archived_at = ''"]
         values: list[Any] = []
         if status:
             conditions.append("status = ?")
@@ -244,15 +257,92 @@ class DiagnosisService:
         return RuleDetector(RuleRegistry(ruleset))
 
     def _trace_ids(self, limit: int, since: str | None) -> list[str]:
-        query = "SELECT trace_id FROM traces"
-        values: list[Any] = []
+        """Compatibility helper; incremental callers use the ruleset-aware selector."""
+
+        return [item[1] for item in self._select_trace_ids(limit, since, self.detector.ruleset_fingerprint()).rows]
+
+    def _select_trace_ids(self, limit: int, since: str | None, ruleset_fingerprint: str) -> _TraceSelection:
+        conditions = [
+            "t.started_at >= ?" if since else "1 = 1",
+            "NOT EXISTS (SELECT 1 FROM analysis_checkpoints c WHERE c.trace_id = t.trace_id AND c.ruleset_fingerprint = ? AND c.status = 'completed')",
+        ]
+        pending_values: list[Any] = []
         if since:
-            query += " WHERE started_at >= ?"
-            values.append(since)
-        query += " ORDER BY started_at, rowid LIMIT ?"
-        values.append(limit)
+            pending_values.append(since)
+        pending_values.append(ruleset_fingerprint)
         with self.db.connection() as connection:
-            return [str(row[0]) for row in connection.execute(query, values)]
+            pending = connection.execute(
+                f"""
+                SELECT t.rowid, t.trace_id, t.started_at FROM traces t
+                WHERE {' AND '.join(conditions)}
+                ORDER BY t.started_at, t.rowid LIMIT ?
+                """,
+                [*pending_values, limit],
+            ).fetchall()
+            rows = list(pending)
+            if len(rows) < limit:
+                cursor = connection.execute(
+                    "SELECT last_rowid FROM analysis_cursors WHERE ruleset_fingerprint = ?",
+                    (ruleset_fingerprint,),
+                ).fetchone()
+                last_rowid = int(cursor[0]) if cursor else 0
+                remaining = limit - len(rows)
+                extra_conditions = [
+                    "t.rowid > ?",
+                    "NOT EXISTS (SELECT 1 FROM analysis_checkpoints c WHERE c.trace_id = t.trace_id AND c.ruleset_fingerprint = ? AND c.status = 'completed') OR t.rowid > ?",
+                ]
+                # The OR keeps the reconciliation window moving while pending rows remain eligible.
+                extra_values: list[Any] = [last_rowid, ruleset_fingerprint, last_rowid]
+                if rows:
+                    placeholders = ", ".join("?" for _ in rows)
+                    extra_conditions.append(f"t.trace_id NOT IN ({placeholders})")
+                    extra_values.extend(str(row[1]) for row in rows)
+                if since:
+                    extra_conditions.append("t.started_at >= ?")
+                    extra_values.append(since)
+                extra = connection.execute(
+                    f"SELECT t.rowid, t.trace_id, t.started_at FROM traces t WHERE {' AND '.join(extra_conditions)} ORDER BY t.started_at, t.rowid LIMIT ?",
+                    [*extra_values, remaining],
+                ).fetchall()
+                rows.extend(extra)
+                if len(rows) < limit and not pending:
+                    wrap_conditions = [
+                        "t.rowid <= ?",
+                        "NOT EXISTS (SELECT 1 FROM analysis_checkpoints c WHERE c.trace_id = t.trace_id AND c.ruleset_fingerprint = ? AND c.status = 'completed') OR t.rowid <= ?",
+                    ]
+                    wrap_values: list[Any] = [last_rowid, ruleset_fingerprint, last_rowid]
+                    seen = {str(row[1]) for row in rows}
+                    if seen:
+                        placeholders = ", ".join("?" for _ in seen)
+                        wrap_conditions.append(f"t.trace_id NOT IN ({placeholders})")
+                        wrap_values.extend(sorted(seen))
+                    if since:
+                        wrap_conditions.append("t.started_at >= ?")
+                        wrap_values.append(since)
+                    wrapped = connection.execute(
+                        f"SELECT t.rowid, t.trace_id, t.started_at FROM traces t WHERE {' AND '.join(wrap_conditions)} ORDER BY t.started_at, t.rowid LIMIT ?",
+                        [*wrap_values, limit - len(rows)],
+                    ).fetchall()
+                    rows.extend(row for row in wrapped if str(row[1]) not in seen)
+            return _TraceSelection(
+                rows=tuple((int(row[0]), str(row[1]), str(row[2])) for row in rows[:limit]),
+                scanned=len(rows),
+                eligible=min(len(rows), limit),
+            )
+
+    def _advance_cursor(self, ruleset_fingerprint: str, row: tuple[int, str, str]) -> None:
+        with self.db.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO analysis_cursors(ruleset_fingerprint, last_rowid, last_started_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(ruleset_fingerprint) DO UPDATE SET
+                    last_rowid = excluded.last_rowid,
+                    last_started_at = excluded.last_started_at,
+                    updated_at = excluded.updated_at
+                """,
+                (ruleset_fingerprint, row[0], row[2], utc_now()),
+            )
 
     def _checkpoint(self, trace_id: str, ruleset_fingerprint: str) -> Any:
         with self.db.connection() as connection:
@@ -355,10 +445,14 @@ class DiagnosisService:
             old_issue_ids = [
                 str(row[0])
                 for row in connection.execute(
-                    "SELECT issue_id FROM issue_occurrences WHERE trace_id = ?", (trace.trace_id,)
+                    "SELECT issue_id FROM issue_occurrences WHERE trace_id = ? AND ruleset_fingerprint = ?",
+                    (trace.trace_id, ruleset_fingerprint),
                 )
             ]
-            connection.execute("DELETE FROM issue_occurrences WHERE trace_id = ?", (trace.trace_id,))
+            connection.execute(
+                "DELETE FROM issue_occurrences WHERE trace_id = ? AND ruleset_fingerprint = ?",
+                (trace.trace_id, ruleset_fingerprint),
+            )
             for issue_id in old_issue_ids:
                 self._refresh_cluster(connection, issue_id)
 
@@ -371,6 +465,7 @@ class DiagnosisService:
                         "category": finding.category,
                         "signature": finding.signature,
                         "capability_id": finding.capability_id,
+                        "ruleset_fingerprint": ruleset_fingerprint,
                     }
                 )
                 row = connection.execute(
@@ -386,8 +481,9 @@ class DiagnosisService:
                             normalized_signature, workspace_id, primary_capability_id,
                             first_seen_at, last_seen_at, severity, status,
                             occurrence_count, confidence_grade, primary_owner_hypothesis,
-                            attribution_state, created_at, updated_at, row_version
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?, 0)
+                            attribution_state, created_at, updated_at, row_version,
+                            ruleset_fingerprint, archived_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?, 0, ?, '')
                         """,
                         (
                             issue_id,
@@ -406,6 +502,7 @@ class DiagnosisService:
                             finding.attribution_state,
                             now,
                             now,
+                            ruleset_fingerprint,
                         ),
                     )
                 else:
@@ -419,6 +516,7 @@ class DiagnosisService:
                         "signature": finding.signature,
                         "events": [ref.event_id for ref in finding.evidence_refs],
                         "capability_version_id": finding.capability_version_id,
+                        "ruleset_fingerprint": ruleset_fingerprint,
                     }
                 )
                 occurrence_id = f"occurrence_{fingerprint[:32]}"
@@ -429,8 +527,8 @@ class DiagnosisService:
                         observed_at, rule_id, rule_version, capability_id,
                         capability_version_id, evidence_refs_json, source_scope_json,
                         error_fingerprint, owner_candidates_json, unknown_fields_json,
-                        evidence_quality, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        evidence_quality, created_at, ruleset_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         occurrence_id,
@@ -449,6 +547,7 @@ class DiagnosisService:
                         _canonical(list(finding.unknown_fields)),
                         finding.confidence_or_evidence_grade,
                         now,
+                        ruleset_fingerprint,
                     ),
                 )
                 if cursor.rowcount != 1:
@@ -493,10 +592,13 @@ class DiagnosisService:
         ).fetchone()
         count = int(row["count"])
         if count == 0:
-            connection.execute("DELETE FROM issue_clusters WHERE issue_id = ?", (issue_id,))
+            connection.execute(
+                "UPDATE issue_clusters SET occurrence_count = 0, archived_at = COALESCE(NULLIF(archived_at, ''), ?), updated_at = ? WHERE issue_id = ?",
+                (utc_now(), utc_now(), issue_id),
+            )
             return
         connection.execute(
-            "UPDATE issue_clusters SET occurrence_count = ?, first_seen_at = ?, last_seen_at = ?, updated_at = ? WHERE issue_id = ?",
+            "UPDATE issue_clusters SET occurrence_count = ?, first_seen_at = ?, last_seen_at = ?, archived_at = '', updated_at = ? WHERE issue_id = ?",
             (count, row["first_seen"], row["last_seen"], utc_now(), issue_id),
         )
 
@@ -516,7 +618,7 @@ class DiagnosisService:
             SET occurrence_count = occurrence_count + 1,
                 last_seen_at = CASE WHEN last_seen_at < ? THEN ? ELSE last_seen_at END,
                 severity = ?, confidence_grade = ?, status = ?,
-                updated_at = ?, row_version = row_version + ?
+                archived_at = '', updated_at = ?, row_version = row_version + ?
             WHERE issue_id = ?
             """,
             (finding.detected_at, finding.detected_at, new_severity, new_confidence, new_status, utc_now(), version_bump, issue_id),
@@ -580,6 +682,8 @@ class DiagnosisService:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             row_version=int(row["row_version"]),
+            ruleset_fingerprint=row["ruleset_fingerprint"],
+            archived_at=row["archived_at"],
         )
 
     @staticmethod
@@ -624,6 +728,7 @@ class DiagnosisService:
             unknown_fields=tuple(_json(row["unknown_fields_json"], [])),
             evidence_quality=row["evidence_quality"],
             created_at=row["created_at"],
+            ruleset_fingerprint=row["ruleset_fingerprint"],
         )
 
 

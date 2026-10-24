@@ -146,6 +146,8 @@ class Issue:
     created_at: str
     updated_at: str
     row_version: int
+    ruleset_fingerprint: str = ""
+    archived_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -168,6 +170,8 @@ class Issue:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "row_version": self.row_version,
+            "ruleset_fingerprint": self.ruleset_fingerprint,
+            "archived_at": self.archived_at,
         }
 
 
@@ -189,6 +193,7 @@ class Occurrence:
     unknown_fields: tuple[str, ...]
     evidence_quality: str
     created_at: str
+    ruleset_fingerprint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -208,6 +213,7 @@ class Occurrence:
             "unknown_fields": _list(self.unknown_fields),
             "evidence_quality": self.evidence_quality,
             "created_at": self.created_at,
+            "ruleset_fingerprint": self.ruleset_fingerprint,
         }
 
 
@@ -266,6 +272,9 @@ class BatchResult:
     occurrence_count: int
     duplicate_occurrences: int
     errors: tuple[str, ...] = ()
+    scanned: int = 0
+    eligible: int = 0
+    remaining_or_unknown: int | str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -278,6 +287,9 @@ class BatchResult:
             "occurrence_count": self.occurrence_count,
             "duplicate_occurrences": self.duplicate_occurrences,
             "errors": _list(self.errors),
+            "scanned": self.scanned,
+            "eligible": self.eligible,
+            "remaining_or_unknown": self.remaining_or_unknown,
         }
 
 

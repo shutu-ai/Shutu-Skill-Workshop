@@ -137,21 +137,22 @@ def _transport_class(event: TraceEvent) -> tuple[str, str, str]:
         or raw_error not in (None, "", {})
     ):
         return "", "", ""
-    metadata = event.source_metadata
-    layer = _text(metadata.get("layer") or metadata.get("failure_layer") or metadata.get("relay_layer")).casefold()
-    if (
-        layer in {"observer", "relay", "observation"}
-        or "relay" in error_type
-        or "observer" in error_type
-        or "relay" in event.transport.casefold()
-    ):
-        return "observer_failure_observed", "observer", f"observer:{status or error_type or 'failure'}"
     if status in {401, 403} or any(value in error_type for value in ("auth", "unauthorized", "forbidden", "permission")):
         return "auth_failure_observed", "auth", f"auth:{status or error_type}"
-    if status is not None and status >= 500:
-        return "network_failure_observed", "network", f"http:{status}"
+    metadata = event.source_metadata
+    layer = _text(metadata.get("failure_layer") or metadata.get("observer_failure_layer") or metadata.get("layer")).casefold()
+    observer_evidence = any(
+        key in metadata
+        for key in ("observer_error", "capture_error", "persistence_error", "sqlite_error", "failed_observations")
+    ) or any(value in error_type for value in ("observer", "sqlite", "persistence", "capture"))
+    if layer in {"observer", "observation", "relay_observer", "persistence", "capture", "storage"} or observer_evidence:
+        return "observer_failure_observed", "observer", f"observer:{status or error_type or 'failure'}"
+    if layer in {"upstream", "network", "proxy"}:
+        return "network_failure_observed", "network", f"upstream:{status or error_type or 'failure'}"
     if any(value in error_type for value in ("timeout", "timed_out", "connection", "network", "dns", "transport")):
         return "network_failure_observed", "network", error_type[:96]
+    if status is not None and status >= 500:
+        return "upstream_boundary_failure_observed", "unknown", f"boundary:http:{status}"
     return "", "", ""
 
 

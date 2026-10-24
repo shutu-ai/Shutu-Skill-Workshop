@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 4
+    latest_schema_version = 5
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -93,6 +93,11 @@ class M1Database:
                 self._create_m3_diagnostics_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (4, datetime('now'))"
+                )
+            if 5 not in applied:
+                self._create_m4_consistency_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -433,3 +438,47 @@ class M1Database:
             """,
         ):
             connection.execute(statement)
+
+    @staticmethod
+    def _create_m4_consistency_schema(connection: sqlite3.Connection) -> None:
+        """Keep ruleset evidence isolated and retain empty issue audit history."""
+
+        cluster_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(issue_clusters)")
+        }
+        if "ruleset_fingerprint" not in cluster_columns:
+            connection.execute(
+                "ALTER TABLE issue_clusters ADD COLUMN ruleset_fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+        if "archived_at" not in cluster_columns:
+            connection.execute(
+                "ALTER TABLE issue_clusters ADD COLUMN archived_at TEXT NOT NULL DEFAULT ''"
+            )
+
+        occurrence_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(issue_occurrences)")
+        }
+        if "ruleset_fingerprint" not in occurrence_columns:
+            connection.execute(
+                "ALTER TABLE issue_occurrences ADD COLUMN ruleset_fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_cursors (
+                ruleset_fingerprint TEXT PRIMARY KEY,
+                last_rowid INTEGER NOT NULL DEFAULT 0,
+                last_started_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_issue_clusters_ruleset ON issue_clusters(ruleset_fingerprint, archived_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_issue_occurrences_ruleset_trace ON issue_occurrences(ruleset_fingerprint, trace_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_cursors_updated ON analysis_cursors(updated_at)"
+        )

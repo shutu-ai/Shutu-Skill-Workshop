@@ -86,9 +86,9 @@ class M3RuleTests(unittest.TestCase):
         self.assertEqual([item.category for item in findings], [
             "auth_failure_observed",
             "network_failure_observed",
-            "observer_failure_observed",
+            "upstream_boundary_failure_observed",
         ])
-        self.assertEqual([item.owner_candidates[0].owner_kind for item in findings], ["auth", "network", "observer"])
+        self.assertEqual([item.owner_candidates[0].owner_kind for item in findings], ["auth", "network", "unknown"])
 
     def test_r03_requires_schema_and_validation_evidence(self) -> None:
         trace = Trace(trace_id="t", workspace_id="w", adapter_id="mcp", status="failed")
@@ -226,7 +226,8 @@ class M3LedgerTests(unittest.TestCase):
         with self.ingestor.db.connection() as connection:
             versions = [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(versions, [1, 2, 3, 4])
+        self.assertEqual(versions[:4], [1, 2, 3, 4])
+        self.assertGreaterEqual(versions[-1], 5)
         self.assertTrue({"issues", "release_operations", "analysis_runs", "issue_clusters", "issue_occurrences"}.issubset(tables))
         scope_a = CorrelationScope(workspace_id="w", run_id="r", mcp_server="a", mcp_connection="a", transport="stdio", request_id="3").to_dict()
         scope_b = CorrelationScope(workspace_id="w", run_id="r", mcp_server="b", mcp_connection="b", transport="stdio", request_id="3").to_dict()
