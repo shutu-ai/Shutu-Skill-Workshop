@@ -44,6 +44,27 @@ from .diagnostics import (
     RuleRegistry,
     RuleSpec,
 )
+from .evolution import (
+    DiagnosisHypothesis,
+    DiagnosisOutputError,
+    DiagnosisReport,
+    EvidenceBundle,
+    EvidenceBundleBuilder,
+    EvaluationCandidate,
+    EvaluationCaseResult,
+    EvaluationReport,
+    EvaluationService,
+    EvaluationSuite,
+    EvaluationVerdict,
+    EvolutionDiagnosisService,
+    FakeProvider,
+    Proposal,
+    ProposalService,
+    RecommendedAction,
+    StaticValidator,
+    TaskCase,
+    local_fixture_suite,
+)
 
 __all__ = [
     "Capability",
@@ -93,6 +114,25 @@ __all__ = [
     "RuleFinding",
     "RuleRegistry",
     "RuleSpec",
+    "DiagnosisHypothesis",
+    "DiagnosisOutputError",
+    "DiagnosisReport",
+    "EvidenceBundle",
+    "EvidenceBundleBuilder",
+    "EvaluationCandidate",
+    "EvaluationCaseResult",
+    "EvaluationReport",
+    "EvaluationService",
+    "EvaluationSuite",
+    "EvaluationVerdict",
+    "EvolutionDiagnosisService",
+    "FakeProvider",
+    "Proposal",
+    "ProposalService",
+    "RecommendedAction",
+    "StaticValidator",
+    "TaskCase",
+    "local_fixture_suite",
 ]
 
 

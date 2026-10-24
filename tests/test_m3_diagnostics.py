@@ -227,7 +227,7 @@ class M3LedgerTests(unittest.TestCase):
             versions = [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertEqual(versions[:4], [1, 2, 3, 4])
-        self.assertGreaterEqual(versions[-1], 5)
+        self.assertGreaterEqual(versions[-1], 6)
         self.assertTrue({"issues", "release_operations", "analysis_runs", "issue_clusters", "issue_occurrences"}.issubset(tables))
         scope_a = CorrelationScope(workspace_id="w", run_id="r", mcp_server="a", mcp_connection="a", transport="stdio", request_id="3").to_dict()
         scope_b = CorrelationScope(workspace_id="w", run_id="r", mcp_server="b", mcp_connection="b", transport="stdio", request_id="3").to_dict()

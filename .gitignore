@@ -3,6 +3,7 @@
 .test-ws/
 .test-m26/
 .test-m3/
+.test-m4/
 pytest-cache-files-*/
 __pycache__/
 *.py[cod]

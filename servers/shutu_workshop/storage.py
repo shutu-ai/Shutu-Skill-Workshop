@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 5
+    latest_schema_version = 6
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -98,6 +98,11 @@ class M1Database:
                 self._create_m4_consistency_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'))"
+                )
+            if 6 not in applied:
+                self._create_m4_evolution_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (6, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -482,3 +487,129 @@ class M1Database:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_analysis_cursors_updated ON analysis_cursors(updated_at)"
         )
+
+    @staticmethod
+    def _create_m4_evolution_schema(connection: sqlite3.Connection) -> None:
+        """Persist bounded diagnosis, review, and offline evaluation summaries."""
+
+        for statement in (
+            """
+            CREATE TABLE IF NOT EXISTS diagnosis_reports (
+                diagnosis_id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                issue_id TEXT NOT NULL REFERENCES issue_clusters(issue_id),
+                issue_row_version INTEGER NOT NULL,
+                evidence_bundle_hash TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                prompt_schema_version TEXT NOT NULL,
+                config_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                confidence_grade TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                evidence_bundle_json TEXT NOT NULL,
+                usage_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                row_version INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evolution_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                issue_id TEXT NOT NULL REFERENCES issue_clusters(issue_id),
+                diagnosis_id TEXT NOT NULL REFERENCES diagnosis_reports(diagnosis_id),
+                evidence_bundle_hash TEXT NOT NULL,
+                capability_id TEXT NOT NULL DEFAULT '',
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                target_hash TEXT NOT NULL,
+                category TEXT NOT NULL,
+                proposal_version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                candidate_hash TEXT NOT NULL,
+                reviewer TEXT NOT NULL DEFAULT '',
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                evaluation_id TEXT NOT NULL DEFAULT '',
+                stale_reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                row_version INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(issue_id, diagnosis_id, candidate_hash)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_suites (
+                suite_id TEXT PRIMARY KEY,
+                suite_hash TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                suite_version TEXT NOT NULL,
+                suite_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_candidates (
+                candidate_id TEXT PRIMARY KEY,
+                proposal_id TEXT NOT NULL REFERENCES evolution_proposals(proposal_id),
+                candidate_hash TEXT NOT NULL,
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                candidate_json TEXT NOT NULL,
+                validation_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(proposal_id, candidate_hash)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_runs (
+                run_id TEXT PRIMARY KEY,
+                suite_id TEXT NOT NULL REFERENCES evaluation_suites(suite_id),
+                candidate_id TEXT NOT NULL REFERENCES evaluation_candidates(candidate_id),
+                proposal_id TEXT NOT NULL REFERENCES evolution_proposals(proposal_id),
+                baseline_fingerprint TEXT NOT NULL,
+                candidate_fingerprint TEXT NOT NULL,
+                suite_hash TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                environment_fingerprint TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                verdict TEXT NOT NULL DEFAULT '',
+                error_type TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL DEFAULT ''
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_case_results (
+                result_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES evaluation_runs(run_id) ON DELETE CASCADE,
+                case_id TEXT NOT NULL,
+                side TEXT NOT NULL,
+                oracle_verdict TEXT NOT NULL,
+                task_success INTEGER,
+                duration_ms INTEGER,
+                tool_call_count INTEGER,
+                retry_count INTEGER,
+                token_count INTEGER,
+                cost REAL,
+                output_ref_json TEXT NOT NULL,
+                errors_json TEXT NOT NULL,
+                observation_completeness TEXT NOT NULL,
+                UNIQUE(run_id, case_id, side)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_verdicts (
+                verdict_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL UNIQUE REFERENCES evaluation_runs(run_id) ON DELETE CASCADE,
+                verdict TEXT NOT NULL,
+                statistics_json TEXT NOT NULL,
+                regression_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_diagnosis_reports_issue ON diagnosis_reports(issue_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_evolution_proposals_issue ON evolution_proposals(issue_id, status, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_candidate ON evaluation_runs(candidate_id, started_at)",
+            "CREATE INDEX IF NOT EXISTS idx_evaluation_case_results_run ON evaluation_case_results(run_id, case_id, side)",
+        ):
+            connection.execute(statement)

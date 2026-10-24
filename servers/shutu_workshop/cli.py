@@ -10,6 +10,7 @@ from typing import Any
 
 from .capabilities import CapabilityRegistry
 from .diagnostics import DiagnosisService, ISSUE_STATUSES
+from .evolution import EvaluationService, EvolutionDiagnosisService, ProposalService, local_fixture_suite
 from .ingestion import TraceIngestor
 from .models import Capability
 from .traces import TraceStore
@@ -94,6 +95,36 @@ def build_parser() -> argparse.ArgumentParser:
     issue_status.add_argument("status", choices=sorted(ISSUE_STATUSES))
     issue_status.add_argument("--expected-row-version", type=int)
     issue_status.add_argument("--reason", default="cli")
+
+    evolution = commands.add_parser("evolution")
+    evolution_commands = evolution.add_subparsers(dest="evolution_command", required=True)
+    evolution_diagnose = evolution_commands.add_parser("diagnose")
+    evolution_diagnose.add_argument("issue_id")
+    evolution_diagnose.add_argument("--provider", default="fake")
+    evolution_diagnose.add_argument("--model", default="")
+    evolution_diagnose.add_argument("--force", action="store_true")
+    evolution_diagnose.add_argument("--json", action="store_true")
+    evolution_proposals = evolution_commands.add_parser("proposals")
+    evolution_proposals.add_argument("issue_id")
+    evolution_proposals.add_argument("--diagnosis-id")
+    evolution_proposals.add_argument("--json", action="store_true")
+    evolution_review = evolution_commands.add_parser("review")
+    evolution_review.add_argument("proposal_id")
+    evolution_review.add_argument("--decision", required=True)
+    evolution_review.add_argument("--reviewer", default="cli")
+    evolution_review.add_argument("--expected-row-version", type=int)
+    evolution_review.add_argument("--json", action="store_true")
+
+    evaluation = commands.add_parser("eval")
+    evaluation_commands = evaluation.add_subparsers(dest="eval_command", required=True)
+    evaluation_run = evaluation_commands.add_parser("run")
+    evaluation_run.add_argument("--proposal", dest="proposal_id", required=True)
+    evaluation_run.add_argument("--suite", default="m4-local-fixture")
+    evaluation_run.add_argument("--mode", choices=("fixture", "real"), default="fixture")
+    evaluation_run.add_argument("--json", action="store_true")
+    evaluation_report = evaluation_commands.add_parser("report")
+    evaluation_report.add_argument("eval_id")
+    evaluation_report.add_argument("--json", action="store_true")
     return parser
 
 
@@ -174,6 +205,40 @@ def main(argv: list[str] | None = None) -> int:
                     reason=args.reason,
                 )
             )
+        return 0
+
+    if args.command == "evolution":
+        if args.evolution_command == "diagnose":
+            _print(
+                EvolutionDiagnosisService(args.workspace).diagnose(
+                    args.issue_id,
+                    provider=args.provider,
+                    model_id=args.model,
+                    force=args.force,
+                )
+            )
+        elif args.evolution_command == "proposals":
+            _print(ProposalService(args.workspace).create_from_diagnosis(args.issue_id, args.diagnosis_id))
+        elif args.evolution_command == "review":
+            _print(
+                ProposalService(args.workspace).review(
+                    args.proposal_id,
+                    args.decision,
+                    reviewer=args.reviewer,
+                    expected_row_version=args.expected_row_version,
+                )
+            )
+        return 0
+
+    if args.command == "eval":
+        service = EvaluationService(args.workspace)
+        if args.eval_command == "run":
+            suite = local_fixture_suite()
+            if args.suite not in {suite.suite_id, "local", "m4-local-fixture"}:
+                raise SystemExit("unknown local evaluation suite")
+            _print(service.run(args.proposal_id, suite=suite, mode=args.mode))
+        elif args.eval_command == "report":
+            _print(service.report(args.eval_id))
         return 0
 
     ingestor = TraceIngestor(args.workspace)
