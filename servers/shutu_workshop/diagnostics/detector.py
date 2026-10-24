@@ -126,8 +126,17 @@ def _is_mcp_error(event: TraceEvent) -> bool:
 def _transport_class(event: TraceEvent) -> tuple[str, str, str]:
     """Return category, owner kind, and stable error label."""
 
-    error_type = f"{event.error_type} {_text(_payload(event).get('error'))}".casefold()
+    payload = _payload(event)
+    raw_error = payload.get("error")
+    error_type = f"{event.error_type} {_text(raw_error)}".casefold()
     status = _http_status(event)
+    if not (
+        event.error_type
+        or status is not None
+        or event.status.casefold() in {"error", "failed", "timeout", "timed_out"}
+        or raw_error not in (None, "", {})
+    ):
+        return "", "", ""
     metadata = event.source_metadata
     layer = _text(metadata.get("layer") or metadata.get("failure_layer") or metadata.get("relay_layer")).casefold()
     if (
@@ -264,13 +273,16 @@ def default_rule_specs() -> tuple[RuleSpec, ...]:
 
 
 class RuleDetector:
-    detector_version = "m3-deterministic-1"
+    detector_version = "m3-deterministic-2"
 
     def __init__(self, registry: RuleRegistry | None = None) -> None:
         self.registry = registry or RuleRegistry()
 
     def ruleset_fingerprint(self) -> str:
-        return self.registry.fingerprint()
+        return _digest(
+            {"detector_version": self.detector_version, "rules": self.registry.fingerprint()},
+            64,
+        )
 
     def detect(self, context: DetectorContext) -> list[RuleFinding]:
         events = tuple(sorted(context.ordered_events, key=lambda item: (item.seq, item.event_id)))
