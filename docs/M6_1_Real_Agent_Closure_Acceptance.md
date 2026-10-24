@@ -8,7 +8,7 @@ The Codex CLI was real (`codex-cli 0.163.0`) and the local baseline/candidate ar
 
 | Gate | Result | Evidence or limit |
 |---|---|---|
-| G0 | BLOCKED | actual baseline is `3be9b51`, while the task names unavailable `4b070b4`; dirty/untracked work was preserved |
+| G0 | PASS | local checkout started at `3be9b51`; live remote baseline `4b070b4` was verified through the proxy; dirty/untracked work was preserved |
 | G1 | PASS | M0–M6 tests, compileall, CLI help, and M6.1 tests were run |
 | G2 | PARTIAL | isolated HOME/version/auth layers are implemented; auth is not available |
 | G3 | BLOCKED_ENV | no provider-backed Codex text response |
@@ -36,7 +36,7 @@ The Codex CLI was real (`codex-cli 0.163.0`) and the local baseline/candidate ar
 ## Required report
 
 ```text
-BASELINE_HEAD=3be9b51
+BASELINE_HEAD=4b070b4
 FINAL_HEAD=<commit SHA recorded at handoff>
 REMOTE_HEAD=<verified origin/main SHA, or BLOCKED_ENV>
 M6_1_STATUS=PARTIAL

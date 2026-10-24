@@ -5,7 +5,7 @@ Scope: isolated Codex CLI and local stdio MCP fixture only. No production Skill,
 
 ## Recorded baseline
 
-The local `.git-push` repository was at `3be9b51` (`feat: add M1 capability trace foundation`). The task text names `4b070b4`, but that object is not present locally and `origin/main` also resolves to `3be9b51`; this difference is recorded as a baseline variance rather than silently rewritten.
+The local `.git-push` checkout and its cached `origin/main` ref were at `3be9b51` (`feat: add M1 capability trace foundation`) when work started. A live proxy `ls-remote` then verified the task baseline `origin/main=4b070b4`; the stale local ref was merged without force-pushing or rewriting history.
 
 ## Probe result
 
