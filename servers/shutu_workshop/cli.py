@@ -8,6 +8,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
+from .adapters import CodexRealTaskRunner
 from .capabilities import CapabilityRegistry
 from .diagnostics import DiagnosisService, ISSUE_STATUSES
 from .evolution import (
@@ -22,7 +23,9 @@ from .models import Capability
 from .release import (
     ArtifactManifest,
     FileArtifactService,
+    FrozenComparisonManifest,
     ObservationWindow,
+    OptimizationFeedbackService,
     ReleaseObservationService,
     ReleasePlanService,
     isolated_skill_suite,
@@ -203,12 +206,68 @@ def build_parser() -> argparse.ArgumentParser:
     release_observe.add_argument("--after-start", required=True)
     release_observe.add_argument("--after-end", required=True)
     release_observe.add_argument("--min-samples", type=int, default=2)
+    release_observe.add_argument("--manifest", type=Path)
+    release_observe.add_argument("--manifest-id", default="")
+    release_observe.add_argument("--task-category", default="")
+    release_observe.add_argument("--source", default="")
+    release_observe.add_argument("--environment", default="")
+    release_observe.add_argument("--agent-id", default="")
+    release_observe.add_argument("--runner-id", default="")
+    release_observe.add_argument("--source-tier", default="")
+    release_observe.add_argument("--experiment-id", default="")
+    release_observe.add_argument("--unknown-max-ratio", type=float, default=0.25)
     release_observe.add_argument("--json", action="store_true")
     release_rollback = release_commands.add_parser("rollback")
     release_rollback.add_argument("release_id")
     release_rollback.add_argument("--version", required=True)
     release_rollback.add_argument("--isolated-root", type=Path, required=True)
     release_rollback.add_argument("--json", action="store_true")
+
+    freeze_manifest = release_commands.add_parser("freeze-manifest")
+    freeze_manifest.add_argument("release_id")
+    freeze_manifest.add_argument("--manifest", type=Path, required=True)
+    freeze_manifest.add_argument("--json", action="store_true")
+
+    agent = commands.add_parser("agent")
+    agent_commands = agent.add_subparsers(dest="agent_command", required=True)
+    agent_codex = agent_commands.add_parser("codex")
+    agent_codex.add_argument("--case-id", required=True)
+    agent_codex.add_argument("--input", help="JSON task input; it is passed only to the child process")
+    agent_codex.add_argument("--input-file", type=Path, help="UTF-8 JSON task input file; avoids PowerShell native quoting")
+    agent_codex.add_argument("--side", choices=("baseline", "candidate"), required=True)
+    agent_codex.add_argument("--artifact-hash", required=True)
+    agent_codex.add_argument("--capability-version-id", default="")
+    agent_codex.add_argument("--pair-id", default="")
+    agent_codex.add_argument("--experiment-id", default="")
+    agent_codex.add_argument("--comparison-manifest-hash", default="")
+    agent_codex.add_argument("--task-category", default="")
+    agent_codex.add_argument("--agent-id", default="codex")
+    agent_codex.add_argument("--model", default="")
+    agent_codex.add_argument("--codex-home", type=Path)
+    agent_codex.add_argument("--cwd", type=Path)
+    agent_codex.add_argument("--timeout", type=float, default=120.0)
+    agent_codex.add_argument("--extra-arg", action="append", default=[])
+    agent_codex.add_argument("--json", action="store_true")
+
+    feedback = commands.add_parser("feedback")
+    feedback_commands = feedback.add_subparsers(dest="feedback_command", required=True)
+    feedback_record = feedback_commands.add_parser("record")
+    feedback_record.add_argument("--observation", required=True)
+    feedback_record.add_argument("--issue", default="")
+    feedback_record.add_argument("--diagnosis", default="")
+    feedback_record.add_argument("--proposal", default="")
+    feedback_record.add_argument("--evaluation", default="")
+    feedback_record.add_argument("--experiment-id", default="")
+    feedback_record.add_argument("--reviewed-at", default="")
+    feedback_record.add_argument("--json", action="store_true")
+    feedback_list = feedback_commands.add_parser("list")
+    feedback_list.add_argument("--release", dest="release_id", default="")
+    feedback_list.add_argument("--observation", dest="observation_id", default="")
+    feedback_list.add_argument("--limit", type=int, default=100)
+    feedback_list.add_argument("--json", action="store_true")
+    feedback_show = feedback_commands.add_parser("show")
+    feedback_show.add_argument("feedback_id")
+    feedback_show.add_argument("--json", action="store_true")
     return parser
 
 
@@ -411,11 +470,90 @@ def main(argv: list[str] | None = None) -> int:
                         after_start=args.after_start,
                         after_end=args.after_end,
                         min_samples=args.min_samples,
+                        task_category=getattr(args, "task_category", ""),
+                        source=getattr(args, "source", ""),
+                        environment_fingerprint=getattr(args, "environment", ""),
+                        agent_id=getattr(args, "agent_id", ""),
+                        runner_id=getattr(args, "runner_id", ""),
+                        comparison_manifest_id=getattr(args, "manifest_id", ""),
+                        source_evidence_tier=getattr(args, "source_tier", ""),
+                        experiment_id=getattr(args, "experiment_id", ""),
+                        unknown_max_ratio=getattr(args, "unknown_max_ratio", 0.25),
+                    ),
+                    comparison_manifest=(
+                        json.loads(args.manifest.read_text(encoding="utf-8"))
+                        if getattr(args, "manifest", None)
+                        else None
                     ),
                 )
             )
         elif args.release_command == "rollback":
             _print(service.rollback(args.release_id, args.version))
+        elif args.release_command == "freeze-manifest":
+            try:
+                value = json.loads(args.manifest.read_text(encoding="utf-8"))
+                manifest = FrozenComparisonManifest.from_dict(value)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise SystemExit(f"invalid comparison manifest: {exc}") from exc
+            _print(ReleaseObservationService(args.workspace).freeze_manifest(args.release_id, manifest))
+        return 0
+
+    if args.command == "agent":
+        if args.agent_command == "codex":
+            if bool(args.input) == bool(args.input_file):
+                raise SystemExit("provide exactly one of --input or --input-file")
+            try:
+                raw_input = args.input_file.read_text(encoding="utf-8") if args.input_file else args.input
+                task_input = json.loads(raw_input)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise SystemExit("task input must be valid UTF-8 JSON") from exc
+            evidence = CodexRealTaskRunner(
+                args.workspace,
+                codex_home=args.codex_home,
+                cwd=args.cwd,
+                model_id=args.model,
+                timeout=args.timeout,
+                extra_args=args.extra_arg,
+            ).run(
+                case_id=args.case_id,
+                task_input=task_input,
+                baseline_or_candidate=args.side,
+                artifact_hash=args.artifact_hash,
+                capability_version_id=args.capability_version_id,
+                pair_id=args.pair_id,
+                experiment_id=args.experiment_id,
+                comparison_manifest_hash=args.comparison_manifest_hash,
+                task_category=args.task_category,
+                agent_id=args.agent_id,
+                provider_model=args.model,
+            )
+            _print(evidence)
+            return 0 if evidence.execution_status == "completed" else 2
+
+    if args.command == "feedback":
+        feedback_service = OptimizationFeedbackService(args.workspace)
+        if args.feedback_command == "record":
+            observation = ReleaseObservationService(args.workspace).get(args.observation)
+            if observation is None:
+                raise SystemExit("observation does not exist")
+            _print(
+                feedback_service.record(
+                    observation,
+                    issue_id=args.issue,
+                    diagnosis_id=args.diagnosis,
+                    proposal_id=args.proposal,
+                    evaluation_id=args.evaluation,
+                    experiment_id=args.experiment_id,
+                    reviewed_at=args.reviewed_at,
+                )
+            )
+        elif args.feedback_command == "list":
+            _print(feedback_service.list(release_id=args.release_id, observation_id=args.observation_id, limit=args.limit))
+        elif args.feedback_command == "show":
+            value = feedback_service.get(args.feedback_id)
+            if value is None:
+                raise SystemExit("feedback does not exist")
+            _print(value)
         return 0
 
     ingestor = TraceIngestor(args.workspace)

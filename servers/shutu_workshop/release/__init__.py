@@ -1,9 +1,10 @@
-"""M5 controlled isolated release and offline observation contracts."""
+"""M5 controlled release plus M6 comparison and feedback contracts."""
 
 from .artifacts import ArtifactError, ArtifactManifest, FileArtifactService, artifact_tree_hash, isolated_skill_suite
 from .eligibility import EligibilityDecision, ReleaseEligibilityService, assess_release_eligibility
 from ..evolution.evaluation import FileBackedIsolatedRunner
-from .observation import ObservationResult, ObservationWindow, ReleaseObservationService
+from .observation import FrozenComparisonManifest, ObservationResult, ObservationWindow, ReleaseObservationService
+from .feedback import OptimizationFeedback, OptimizationFeedbackService
 from .plans import (
     ReleaseApproval,
     ReleaseInProgress,
@@ -19,6 +20,9 @@ __all__ = [
     "EligibilityDecision",
     "FileArtifactService",
     "FileBackedIsolatedRunner",
+    "FrozenComparisonManifest",
+    "OptimizationFeedback",
+    "OptimizationFeedbackService",
     "ObservationResult",
     "ObservationWindow",
     "ReleaseApproval",

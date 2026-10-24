@@ -12,7 +12,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from ..ingestion import TraceIngestor
 from ..models import IngestResult, Trace, TraceEvent, new_id, utc_now
@@ -378,6 +378,7 @@ class BaseAdapter:
         command: Sequence[str],
         *,
         cwd: str | Path | None = None,
+        env: Mapping[str, str] | None = None,
         timeout: float = 60.0,
         trace_id: str = "",
         max_line_bytes: int = 256 * 1024,
@@ -397,9 +398,13 @@ class BaseAdapter:
 
         started = time.perf_counter()
         active_trace_id = trace_id or new_id(f"trace-{self.adapter_id}")
+        environment = os.environ.copy()
+        if env:
+            environment.update({str(key): str(value) for key, value in env.items()})
         process = subprocess.Popen(
             list(command),
             cwd=str(cwd) if cwd is not None else None,
+            env=environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

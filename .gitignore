@@ -4,6 +4,7 @@
 .test-m26/
 .test-m3/
 .test-m4/
+.test-m6/
 pytest-cache-files-*/
 __pycache__/
 *.py[cod]

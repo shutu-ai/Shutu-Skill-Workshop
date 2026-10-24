@@ -7,12 +7,15 @@ from .base import (
     BaseAdapter,
     CaptureResult,
 )
+from .real_agent import CodexRealTaskRunner, RealAgentRunEvidence
 __all__ = [
     "AdapterDescriptor",
     "AdapterEvent",
     "AdapterHealth",
     "BaseAdapter",
     "CaptureResult",
+    "CodexRealTaskRunner",
+    "RealAgentRunEvidence",
     "CodexAdapter",
 ]
 

@@ -256,8 +256,8 @@ print(json.dumps(output, sort_keys=True))
             started_at="2026-01-01T12:00:00+00:00",
         )
         result = observer.observe(release.release_id, window)
-        self.assertEqual(result.conclusion, "IMPROVEMENT_SIGNAL")
-        self.assertEqual(result.signal, "SUPPORTED_IMPROVEMENT")
+        self.assertEqual(result.conclusion, "SIMULATION_ONLY")
+        self.assertEqual(result.signal, "DEMONSTRATION_ONLY")
         self.assertEqual(observer.observe(release.release_id, window).observation_id, result.observation_id)
         self.assertNotEqual(after.trace_id, before.trace_id)
         regression_window = ObservationWindow(
@@ -281,7 +281,7 @@ print(json.dumps(output, sort_keys=True))
             task_result="failed",
             started_at="2026-01-05T12:00:00+00:00",
         )
-        self.assertEqual(observer.observe(release.release_id, regression_window).conclusion, "REGRESSION_SIGNAL")
+        self.assertEqual(observer.observe(release.release_id, regression_window).conclusion, "SIMULATION_ONLY")
 
     def test_subprocess_crash_after_m0_journal_is_reconciled_on_restart(self) -> None:
         manifest, evaluation = self._materialize_and_evaluate()

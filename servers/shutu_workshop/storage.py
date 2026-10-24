@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 8
+    latest_schema_version = 9
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -113,6 +113,11 @@ class M1Database:
                 self._create_m5_release_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (8, datetime('now'))"
+                )
+            if 9 not in applied:
+                self._create_m6_feedback_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (9, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -776,5 +781,93 @@ class M1Database:
             "CREATE INDEX IF NOT EXISTS idx_release_links_status ON release_links(status, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_release_plan_events_plan ON release_plan_events(plan_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_release_observation_release ON release_observation_runs(release_id, created_at)",
+        ):
+            connection.execute(statement)
+
+    @staticmethod
+    def _create_m6_feedback_schema(connection: sqlite3.Connection) -> None:
+        """Persist frozen comparison identity and auditable M6 feedback additively."""
+
+        for statement in (
+            """
+            CREATE TABLE IF NOT EXISTS comparison_manifests (
+                manifest_id TEXT PRIMARY KEY,
+                release_id TEXT NOT NULL REFERENCES release_links(release_id),
+                manifest_hash TEXT NOT NULL UNIQUE,
+                manifest_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS real_agent_runs (
+                run_id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                pair_id TEXT NOT NULL DEFAULT '',
+                experiment_id TEXT NOT NULL DEFAULT '',
+                side TEXT NOT NULL,
+                host TEXT NOT NULL,
+                host_version TEXT NOT NULL DEFAULT 'unknown',
+                model_id TEXT NOT NULL DEFAULT '',
+                runner_id TEXT NOT NULL DEFAULT '',
+                runner_version TEXT NOT NULL DEFAULT '',
+                workspace_id TEXT NOT NULL DEFAULT '',
+                environment_fingerprint TEXT NOT NULL DEFAULT '',
+                baseline_or_candidate TEXT NOT NULL,
+                artifact_hash TEXT NOT NULL DEFAULT '',
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                trace_id TEXT NOT NULL DEFAULT '',
+                execution_status TEXT NOT NULL,
+                task_result TEXT NOT NULL DEFAULT 'unknown',
+                oracle_result TEXT NOT NULL DEFAULT 'unknown',
+                observation_completeness TEXT NOT NULL DEFAULT 'unknown',
+                source_evidence_tier TEXT NOT NULL,
+                session_run_digest TEXT NOT NULL DEFAULT '',
+                execution_manifest_hash TEXT NOT NULL UNIQUE,
+                captured_at TEXT NOT NULL,
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                missing_fields_json TEXT NOT NULL DEFAULT '[]',
+                event_refs_json TEXT NOT NULL DEFAULT '[]',
+                payload_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS optimization_feedback (
+                feedback_id TEXT PRIMARY KEY,
+                release_id TEXT NOT NULL REFERENCES release_links(release_id),
+                observation_id TEXT NOT NULL,
+                experiment_id TEXT NOT NULL DEFAULT '',
+                baseline_capability_version_id TEXT NOT NULL DEFAULT '',
+                candidate_capability_version_id TEXT NOT NULL DEFAULT '',
+                baseline_artifact_hash TEXT NOT NULL DEFAULT '',
+                candidate_artifact_hash TEXT NOT NULL DEFAULT '',
+                verdict TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                source_tier TEXT NOT NULL,
+                evidence_quality TEXT NOT NULL,
+                issue_id TEXT NOT NULL DEFAULT '',
+                issue_row_version INTEGER,
+                diagnosis_id TEXT NOT NULL DEFAULT '',
+                proposal_id TEXT NOT NULL DEFAULT '',
+                evaluation_id TEXT NOT NULL DEFAULT '',
+                included_trace_digests_json TEXT NOT NULL DEFAULT '[]',
+                excluded_trace_digests_json TEXT NOT NULL DEFAULT '[]',
+                comparison_manifest_hash TEXT NOT NULL DEFAULT '',
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                feedback_state TEXT NOT NULL,
+                recommended_next_action TEXT NOT NULL,
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1,
+                fingerprint TEXT NOT NULL UNIQUE,
+                payload_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_comparison_manifests_release ON comparison_manifests(release_id, updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_real_agent_runs_pair ON real_agent_runs(pair_id, case_id, captured_at)",
+            "CREATE INDEX IF NOT EXISTS idx_real_agent_runs_trace ON real_agent_runs(trace_id, captured_at)",
+            "CREATE INDEX IF NOT EXISTS idx_feedback_observation ON optimization_feedback(observation_id, revision)",
+            "CREATE INDEX IF NOT EXISTS idx_feedback_release ON optimization_feedback(release_id, created_at)",
         ):
             connection.execute(statement)

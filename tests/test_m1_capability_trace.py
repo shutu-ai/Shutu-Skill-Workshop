@@ -91,7 +91,7 @@ class M1CapabilityTraceTests(unittest.TestCase):
         with self.db.connection() as connection:
             self.assertEqual(
                 [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")],
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9],
             )
         from plugins.daagent.skill_workshop.store import WorkshopStore
 

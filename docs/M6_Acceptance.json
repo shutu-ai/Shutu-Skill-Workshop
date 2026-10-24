@@ -1,0 +1,65 @@
+{
+  "stage": "M6_REAL_WORLD_VALIDATION_AND_OPTIMIZATION_FEEDBACK",
+  "baseline_head": "88cefcb0981882b009837a8e9767df4495cd6db",
+  "final_head": null,
+  "remote_head": null,
+  "status": "PARTIAL",
+  "gates": {
+    "M6_0_BEFORE_TRACE_BINDING": "PASS_REPORTED",
+    "M6_0_RATE_COMPARISON": "PASS_REPORTED",
+    "M6_0_SIMULATION_GUARD": "PASS_REPORTED",
+    "M6_1_REAL_CODEX_MCP": "BLOCKED_ENV",
+    "M6_1_SKILL_INVOCATION_OBSERVABILITY": "NOT_OBSERVABLE",
+    "M6_2_REAL_AGENT_BASELINE_CANDIDATE": "BLOCKED_ENV",
+    "M6_2_REAL_TASK_EVIDENCE_TIER": "BLOCKED_ENV",
+    "M6_3_OPENCODE_REAL_TOOL_HOOK": "BLOCKED_ENV",
+    "M6_4_FEEDBACK_LOOP": "PASS_REPORTED",
+    "M6_4_FALSE_EXACT_JOIN_COUNT": 0,
+    "REAL_AGENT_OBSERVATION_SAMPLE_COUNT": 0,
+    "REAL_AGENT_PAIRED_CASES": 0,
+    "REAL_LLM_DIAGNOSIS": "BLOCKED_ENV",
+    "OFFICIAL_MCP_SDK_INTEROP": "UNVERIFIED",
+    "PRODUCTION_TARGET_RELEASE": "NOT_EXECUTED"
+  },
+  "real_probe": {
+    "codex_version": "codex-cli 0.163.0",
+    "isolated_mcp_registration": "PASS_REPORTED",
+    "execution_status": "BLOCKED_ENV",
+    "provider_error": "401 Unauthorized: Missing bearer",
+    "tool_calls": 0,
+    "event_ref_count": 14,
+    "trace_id": "real-agent_8762a8e3c6754f3596ffa53edc08c534",
+    "session_run_digest": "f9de8768d6ee229394e929254aab67a45480e7cb43f75e469cf6227fa490a8ed",
+    "execution_manifest_hash": "8ae1e1da7db46cc318ae167259cf79eef1cd8d527c3f26ab56a33860317e76de",
+    "skill_invocation_observability": "NOT_OBSERVABLE",
+    "raw_prompt_persisted": false,
+    "credentials_persisted": false
+  },
+  "tests": {
+    "m6_fixture_tests": 5,
+    "full_tests": 70,
+    "skipped": [
+      "real Codex MCP tool success/failure pair",
+      "real Agent baseline/candidate Oracle-scored pair",
+      "real OpenCode V2 Provider hook",
+      "official MCP SDK interoperability"
+    ]
+  },
+  "docs": [
+    "docs/M6_0_Observation_And_Real_Adapter_Probe.md",
+    "docs/M6_Real_World_Validation_and_Feedback_Design.md",
+    "docs/M6_Real_World_Validation_and_Feedback_Acceptance.md",
+    "docs/M6_Operations_Runbook.md"
+  ],
+  "safety": {
+    "automatic_pr": false,
+    "automatic_deploy": false,
+    "automatic_rollback": false,
+    "production_target_release": "NOT_EXECUTED"
+  },
+  "git": {
+    "commit": null,
+    "push": null,
+    "remote_head": null
+  }
+}

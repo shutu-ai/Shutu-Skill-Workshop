@@ -17,7 +17,15 @@ from .models import (
 from .redaction import RedactionPolicy
 from .storage import M1Database
 from .traces import TraceStore
-from .adapters import AdapterDescriptor, AdapterEvent, AdapterHealth, BaseAdapter, CaptureResult
+from .adapters import (
+    AdapterDescriptor,
+    AdapterEvent,
+    AdapterHealth,
+    BaseAdapter,
+    CaptureResult,
+    CodexRealTaskRunner,
+    RealAgentRunEvidence,
+)
 from .adapters.opencode import OpenCodeAdapter
 from .capture import Checkpoint, CheckpointedJSONL
 from .observers.mcp import (
@@ -78,8 +86,11 @@ from .release import (
     ArtifactManifest,
     EligibilityDecision,
     FileArtifactService,
+    FrozenComparisonManifest,
     ObservationResult,
     ObservationWindow,
+    OptimizationFeedback,
+    OptimizationFeedbackService,
     ReleaseApproval,
     ReleaseEligibilityService,
     ReleaseInProgress,
@@ -103,6 +114,7 @@ __all__ = [
     "BaseAdapter",
     "CaptureResult",
     "CodexAdapter",
+    "CodexRealTaskRunner",
     "OpenCodeAdapter",
     "Checkpoint",
     "CheckpointedJSONL",
@@ -112,6 +124,7 @@ __all__ = [
     "M1Database",
     "PayloadLimitError",
     "RedactionPolicy",
+    "RealAgentRunEvidence",
     "Trace",
     "TraceEvent",
     "TraceIngestor",
@@ -172,8 +185,11 @@ __all__ = [
     "ArtifactManifest",
     "EligibilityDecision",
     "FileArtifactService",
+    "FrozenComparisonManifest",
     "ObservationResult",
     "ObservationWindow",
+    "OptimizationFeedback",
+    "OptimizationFeedbackService",
     "ReleaseApproval",
     "ReleaseEligibilityService",
     "ReleaseInProgress",
