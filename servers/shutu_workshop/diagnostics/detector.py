@@ -395,7 +395,9 @@ class RuleDetector:
             if valid is None:
                 valid = validation.get("ok")
             invalid = valid is False or _text(validation.get("result")).casefold() in {"invalid", "failed", "mismatch"}
-            explicit_error = "schema" in _text(payload.get("error")).casefold() and bool(_error(event))
+            explicit_error = (
+                "schema" in _text(payload.get("error")).casefold() and bool(_error(event))
+            ) or "schema" in event.error_type.casefold()
             if not (invalid or explicit_error):
                 argument_keys = payload.get("argument_keys")
                 if isinstance(argument_keys, list) and event.type.casefold() in {"mcp.tool_call", "tool.call", "tool.before"}:
@@ -456,9 +458,20 @@ class RuleDetector:
         by_id = {event.event_id: event for event in context.ordered_events}
         findings: list[RuleFinding] = []
         for event in context.ordered_events:
-            if not event.retry_of_event_id or event.retry_of_event_id not in by_id:
+            original = by_id.get(event.retry_of_event_id) if event.retry_of_event_id else None
+            if original is None and event.attempt_index is not None and event.attempt_index > 1:
+                for candidate in reversed(context.ordered_events):
+                    if candidate.seq >= event.seq or candidate.tool_name != event.tool_name:
+                        continue
+                    if candidate.observation_source != event.observation_source:
+                        continue
+                    candidate_scope = {key: value for key, value in _scope(candidate).items() if key != "request_id"}
+                    event_scope = {key: value for key, value in _scope(event).items() if key != "request_id"}
+                    if candidate_scope == event_scope and candidate.attempt_index == event.attempt_index - 1:
+                        original = candidate
+                        break
+            if original is None:
                 continue
-            original = by_id[event.retry_of_event_id]
             if not (_is_mcp_error(original) or _transport_class(original)[0] or original.status in {"error", "failed"}):
                 continue
             if not (_is_mcp_error(event) or _transport_class(event)[0] or event.status in {"error", "failed"}):

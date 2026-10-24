@@ -122,6 +122,11 @@ class M3RuleTests(unittest.TestCase):
         second = event("retry", 1, "mcp.tool_result", event_id="second", status="error", error_type="timeout", retry_of_event_id="first", attempt_index=2)
         findings = RuleDetector().detect(DetectorContext(trace, (first, second)))
         self.assertEqual([item.rule_id for item in findings], ["R02", "R02", "R04", "R05"])
+        chained = (
+            event("retry", 2, "mcp.tool_result", event_id="third", status="error", error_type="timeout", attempt_index=1),
+            event("retry", 3, "mcp.tool_result", event_id="fourth", status="error", error_type="timeout", attempt_index=2),
+        )
+        self.assertEqual(sum(item.rule_id == "R04" for item in RuleDetector().detect(DetectorContext(trace, chained))), 1)
 
     def test_r06_is_not_assessable_without_explicit_expectation(self) -> None:
         trace = Trace(trace_id="t", workspace_id="w", adapter_id="agent", status="ok")

@@ -546,9 +546,13 @@ class DiagnosisService:
         return _digest(
             {
                 "trace_id": trace.trace_id,
+                "workspace_id": trace.workspace_id,
+                "adapter_id": trace.adapter_id,
+                "adapter_version": trace.adapter_version,
                 "status": trace.status,
                 "task_result": trace.task_result,
                 "observation_completeness": trace.observation_completeness,
+                "metadata": trace.metadata,
                 "event_count": len(events),
                 "events": sorted(identities, key=lambda item: (item["event_id"], item["seq"])),
             }
