@@ -32,7 +32,7 @@
   "M7_4_PRODUCTION_AUTO_RELEASE": "DISABLED",
   "TESTS": "108/108",
   "SKIPPED": 0,
-  "GIT_PUSH": "pending",
+  "GIT_PUSH": "PASS",
   "evidence": {
     "routing": {"tests": ["tests.test_m74_real_skill_evaluation.M74EvidenceIntegrityTests.test_native_routing_requires_verifiable_scoped_host_event"]},
     "artifact_integrity": {"tests": ["tests.test_m74_real_skill_evaluation.M74EvidenceIntegrityTests.test_fixture_runner_marks_artifact_mutation_unknown", "tests.test_m74_real_skill_evaluation.M74EvidenceIntegrityTests.test_real_runner_rejects_skill_leak_in_no_skill_arm"]},
