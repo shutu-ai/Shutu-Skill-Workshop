@@ -1,0 +1,43 @@
+{
+  "BASELINE_HEAD": "112c73b735c07dc331dbdc04833a94d59389c58f",
+  "SOURCE_HEAD": "112c73b735c07dc331dbdc04833a94d59389c58f",
+  "FINAL_HEAD": null,
+  "REMOTE_HEAD": null,
+  "CODEX_CLI_VERSION": "codex-cli 0.163.0",
+  "CODEX_DESKTOP_VERSION": "NOT_AVAILABLE",
+  "M7_1_OVERALL_STATUS": "PARTIAL",
+  "M7_1_CLI_STATUS": "PASS",
+  "M7_1_CLI_INTEGRATION_MODE": "COMPAT_MCP_SKILL_HOOKS",
+  "M7_1_CLI_REAL_MCP_HEALTH": "PASS",
+  "M7_1_CLI_REAL_MCP_ISSUES": "PASS",
+  "M7_1_CLI_SKILL_WORKFLOW": "PASS",
+  "M7_1_CLI_HOOK_TRUST": "HOST_UNSUPPORTED",
+  "M7_1_HOOK_REAL_CAPTURE": "HOST_UNSUPPORTED",
+  "M7_1_HOOK_IMPORT_TO_TRACE": "PASS",
+  "M7_1_REAL_ISSUE_DIAGNOSIS": "PARTIAL",
+  "M7_1_DESKTOP_STATUS": "BLOCKED_ENV",
+  "M7_1_CODEX_EXEC_PLUGIN_STATUS": "HOST_UNSUPPORTED",
+  "M7_1_DUPLICATE_MCP_SERVERS": 0,
+  "M7_1_FALSE_EXACT_JOIN_COUNT": 0,
+  "M7_1_OBSERVER_OVERHEAD": "UNVERIFIED",
+  "M7_1_NO_SECOND_CODEX_FOR_DAILY_USE": "PASS",
+  "M7_1_ADDITIONAL_PROVIDER_AUTH_REQUIRED": "NO",
+  "M7_1_RELEASE_AUTOMATION": "DISABLED",
+  "M6_2_STATUS": "PARTIAL",
+  "TESTS": "4/87, skipped=0",
+  "GIT_PUSH": "PENDING_FINAL_HANDOFF",
+  "evidence": {
+    "interactive_cli": "docs/M7_1_Host_Probe.json",
+    "matrix": "docs/M7_1_Host_Capability_Matrix.md",
+    "package_verification": "scripts/verify-m7-plugin.ps1",
+    "cli_verification": "scripts/verify-m71-codex.ps1",
+    "importer_tests": "tests/test_m71_hook_to_core.py"
+  },
+  "known_limitations": [
+    "Current CLI did not expose native plugin MCP tools.",
+    "Current CLI /hooks showed no Workshop PostToolUse hook.",
+    "Windows Desktop was unavailable to this execution environment.",
+    "codex exec did not produce a completed Workshop Tool Result.",
+    "M6.2 remains independent PARTIAL/INCONCLUSIVE."
+  ]
+}

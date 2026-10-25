@@ -1,0 +1,74 @@
+{
+  "schema_version": "m7.1-host-probe-v1",
+  "observed_at": "2026-10-25",
+  "baseline_head": "112c73b735c07dc331dbdc04833a94d59389c58f",
+  "codex_cli_version": "codex-cli 0.163.0",
+  "desktop_version": "NOT_AVAILABLE",
+  "authentication": "PASS",
+  "plugin": {
+    "marketplace": "shutu-workshop-local",
+    "plugin_id": "shutu-skill-workshop@shutu-workshop-local",
+    "installed": true,
+    "enabled": true,
+    "package_schema": "PASS",
+    "cache_root_observed": true
+  },
+  "interactive_cli": {
+    "native": {
+      "plugin_discovery": "PASS",
+      "mcp_tools_list": "HOST_UNSUPPORTED",
+      "mcp_tool_call": "HOST_UNSUPPORTED",
+      "skill_discovery": "PASS",
+      "skill_invocation": "NOT_OBSERVABLE",
+      "hook_trust": "HOST_UNSUPPORTED",
+      "hook_event": "HOST_UNSUPPORTED"
+    },
+    "compat": {
+      "mode": "COMPAT_MCP_SKILL_HOOKS",
+      "single_mcp_registration": "PASS",
+      "mcp_process_start": "PASS",
+      "mcp_tools_list": "PASS_BY_HOST_TOOL_EXPOSURE",
+      "workshop_health_call": "PASS",
+      "workshop_list_issues_call": "PASS",
+      "health_data_status": "NO_DATA",
+      "issues_data_status": "NO_ACTIONABLE_ISSUE",
+      "skill_workflow": "PASS",
+      "skill_lifecycle": "NOT_OBSERVABLE",
+      "hook_trust": "HOST_UNSUPPORTED",
+      "hook_event": "HOST_UNSUPPORTED"
+    },
+    "hooks_ui_observation": {
+      "post_tool_use_installed": 0,
+      "post_tool_use_active": 0,
+      "session_start_installed": 1,
+      "session_start_active": 1,
+      "source": "interactive /hooks screen"
+    }
+  },
+  "desktop": {
+    "status": "BLOCKED_ENV",
+    "version": "NOT_AVAILABLE",
+    "tool_calls": "NOT_OBSERVABLE",
+    "hook_capture": "NOT_OBSERVABLE"
+  },
+  "codex_exec": {
+    "status": "HOST_UNSUPPORTED",
+    "mcp_item_observed": "workshop_health in_progress",
+    "completed_tool_result": "NOT_OBSERVED",
+    "independent_from_interactive_cli": true
+  },
+  "core_importer": {
+    "spool_checkpoint": "event_key_set",
+    "atomic_replace": "PASS_BY_TEST",
+    "duplicate_occurrence": "PASS_BY_TEST",
+    "real_host_event": "BLOCKED_ENV"
+  },
+  "privacy": {
+    "raw_prompt_persisted": false,
+    "raw_tool_args_persisted": false,
+    "raw_tool_results_persisted": false,
+    "credentials_copied": false,
+    "second_codex_started": false,
+    "additional_provider_auth": false
+  }
+}

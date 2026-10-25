@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..capabilities import CapabilityRegistry
+from ..capture import HookSpoolImporter
 from ..diagnostics import DiagnosisService
 from ..evolution import EvaluationService, EvolutionDiagnosisService, ProposalService
 from ..release import ReleaseObservationService
@@ -64,12 +65,14 @@ class WorkshopMcpService:
         self.proposals = ProposalService(self.db)
         self.evaluations = EvaluationService(self.db)
         self.observations = ReleaseObservationService(self.db)
+        self.hook_importer = HookSpoolImporter(self.workspace, self.plugin_data) if self.plugin_data else None
 
     @property
     def db_path(self) -> Path:
         return database_path(self.workspace)
 
     def health(self, _arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        hook_import = self._flush_hooks()
         counts: dict[str, int] = {}
         latest_event = ""
         latest_trace = ""
@@ -112,11 +115,13 @@ class WorkshopMcpService:
                 "plugin_data_configured": self.plugin_data is not None,
                 "hook_status": hook.get("status", "NOT_ACTIVE"),
                 "hook_state": hook,
+                "hook_import": hook_import,
             },
             "modes": {"passive": True, "review": True, "automatic_release": False},
         }
 
     def recent_activity(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        hook_import = self._flush_hooks()
         arguments = arguments or {}
         events = self.traces.list_events()
         events.sort(key=lambda event: (event.occurred_at, event.event_id), reverse=True)
@@ -146,9 +151,11 @@ class WorkshopMcpService:
             "source": "workshop.core.trace_store",
             "activities": items,
             "count": len(items),
+            "hook_import": hook_import,
         }
 
     def list_issues(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        hook_import = self._flush_hooks()
         arguments = arguments or {}
         issues = self.diagnosis.list_issues(
             status=str(arguments.get("status") or "") or None,
@@ -164,6 +171,7 @@ class WorkshopMcpService:
             "source": "workshop.core.diagnosis",
             "issues": values,
             "count": len(values),
+            "hook_import": hook_import,
         }
 
     def issue_detail(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -335,6 +343,18 @@ class WorkshopMcpService:
         if not isinstance(value, dict):
             return {"status": "HOOKS_UNTRUSTED", "state_present": False}
         return {"status": "REAL_OBSERVED", "state_present": True, **{key: value[key] for key in ("captured", "dropped", "unknown", "last_event_at") if key in value}}
+
+    def _flush_hooks(self) -> dict[str, Any]:
+        if self.hook_importer is None:
+            return {"status": "NOT_ACTIVE", "source": "CODEX_HOOK"}
+        result = self.hook_importer.flush()
+        value = result.to_dict()
+        if result.accepted or result.duplicates:
+            try:
+                value["diagnosis"] = _json_value(self.diagnosis.analyze_new(limit=100).to_dict())
+            except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+                value["diagnosis"] = {"status": "OBSERVATION_GAP", "error_type": type(exc).__name__}
+        return value
 
     @staticmethod
     def _error(message: str, *, code: str, **extra: Any) -> dict[str, Any]:
