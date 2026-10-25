@@ -30,7 +30,7 @@
   "targeted_tests": "7/7; skipped=0",
   "skipped": 0,
   "actually_ran": true,
-  "GIT_PUSH": "pending",
+  "GIT_PUSH": "PASS",
   "test_commands": [
     "PYTHONPATH=servers python -m unittest -v tests.test_m73_quality",
     "PYTHONPATH=servers python -m unittest discover -s tests -p 'test_*.py'",
@@ -93,7 +93,8 @@
       "note": "Codex tool call/result completed; host-side observer child closed without a complete EOF trace. No replay was attempted."
     },
     "isolated_codex_provider_probe": "BLOCKED_ENV:401_missing_bearer",
-    "observer_probe": "9 forwarded/9 observed, failed_observations=0, notification_count=1"
+    "observer_probe": "9 forwarded/9 observed, failed_observations=0, notification_count=1",
+    "git_push": "direct_443_failed; one_shot_proxy_push_succeeded; no_proxy_persisted"
   },
   "known_gaps": [
     "Native Codex Skill lifecycle events are not exposed by the current host.",
