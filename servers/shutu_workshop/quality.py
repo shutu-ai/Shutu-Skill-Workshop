@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -31,6 +31,9 @@ EVIDENCE_TIERS = frozenset(
         "EXPERIMENT_CONDITION",
         "FIXTURE_EXECUTED",
         "REAL_TASK_EXECUTED",
+        "REAL_AGENT_OBSERVED",
+        "REAL_MCP_TOOL_EXECUTED",
+        "REAL_ARTIFACT_ACTIVATED",
         "INFERRED",
         "NOT_OBSERVABLE",
         "UNKNOWN",
@@ -99,6 +102,8 @@ class SkillSelectionLabel:
     selection_mode: str = "NATURAL"
     observed_invocation: bool | None = None
     observation_evidence_tier: str = "NOT_OBSERVABLE"
+    host_event_ref: str = ""
+    source_scope: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.should_use not in {"yes", "no", "review"}:
@@ -107,6 +112,8 @@ class SkillSelectionLabel:
             raise ValueError("unsupported selection mode")
         if self.observation_evidence_tier not in EVIDENCE_TIERS:
             raise ValueError("unsupported observation evidence tier")
+        if not str(self.label_source).strip():
+            raise ValueError("label_source is required")
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -401,34 +408,97 @@ class SkillRegistry:
 class SkillRoutingEvaluator:
     """Evaluate labelled routing without inventing host invocation truth."""
 
-    def evaluate(self, labels: Sequence[SkillSelectionLabel], *, environment_fingerprint: str = "") -> QualityReport:
+    @staticmethod
+    def _trusted_host_event(
+        label: SkillSelectionLabel,
+        host_events: Mapping[str, Mapping[str, Any]] | None,
+    ) -> tuple[bool, str]:
+        """Return true only for a scoped, native lifecycle event we can verify."""
+
+        if label.selection_mode != "NATURAL":
+            return False, "selection_mode_not_natural"
+        if label.observed_invocation is None:
+            return False, "invocation_value_missing"
+        if label.observation_evidence_tier != "HOST_OBSERVED":
+            return False, "host_evidence_tier_mismatch"
+        if not label.host_event_ref:
+            return False, "host_event_ref_missing"
+        if not host_events:
+            return False, "host_event_index_missing"
+        event = host_events.get(label.host_event_ref)
+        if not isinstance(event, Mapping):
+            return False, "host_event_ref_not_found"
+        event_type = str(event.get("type") or event.get("event_type") or "")
+        if event_type not in {"skill.loaded", "skill.invoked"}:
+            return False, "host_event_not_skill_lifecycle"
+        event_ref = str(event.get("event_id") or event.get("host_event_ref") or "")
+        if not event_ref:
+            return False, "host_event_id_missing"
+        if event_ref != label.host_event_ref:
+            return False, "host_event_ref_mismatch"
+        event_scope = event.get("source_scope") or event.get("correlation_scope") or {}
+        if not isinstance(event_scope, Mapping):
+            return False, "host_event_scope_missing"
+        expected_id = label.target_skill_id
+        actual_id = str(event.get("target_skill_id") or event.get("capability_id") or event_scope.get("capability_id") or "")
+        if expected_id and actual_id and actual_id != expected_id:
+            return False, "skill_scope_mismatch"
+        if expected_id and not actual_id:
+            return False, "skill_scope_missing"
+        for key in ("scope", "version_id", "capability_version_id"):
+            expected = str(label.source_scope.get(key) or "")
+            actual = str(event.get(key) or event_scope.get(key) or "")
+            if expected and actual and expected != actual:
+                return False, f"{key}_mismatch"
+            if expected and not actual:
+                return False, f"{key}_missing"
+        return True, ""
+
+    def evaluate(
+        self,
+        labels: Sequence[SkillSelectionLabel],
+        *,
+        environment_fingerprint: str = "",
+        host_events: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> QualityReport:
         if len({label.case_id for label in labels}) != len(labels):
             raise ValueError("routing case_id must be unique")
         natural = [label for label in labels if label.selection_mode == "NATURAL"]
         forced = [label for label in labels if label.selection_mode == "FORCED"]
-        usable = [label for label in natural if label.should_use in {"yes", "no"} and label.observed_invocation is not None]
-        unknown = [label.case_id for label in natural if label not in usable]
+        trusted: dict[str, bool] = {}
+        unknown_reasons: dict[str, str] = {}
+        for label in natural:
+            ok, reason = self._trusted_host_event(label, host_events)
+            if ok and label.should_use in {"yes", "no"}:
+                trusted[label.case_id] = bool(label.observed_invocation)
+            else:
+                unknown_reasons[label.case_id] = reason or "label_not_eligible"
+        usable = [label for label in natural if label.case_id in trusted]
+        unknown = [label.case_id for label in natural if label.case_id not in trusted]
         counts = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
         for label in usable:
-            if label.should_use == "yes" and label.observed_invocation:
+            observed = trusted[label.case_id]
+            if label.should_use == "yes" and observed:
                 counts["tp"] += 1
-            elif label.should_use == "no" and label.observed_invocation:
+            elif label.should_use == "no" and observed:
                 counts["fp"] += 1
             elif label.should_use == "yes":
                 counts["fn"] += 1
             else:
                 counts["tn"] += 1
         metrics: list[QualityMetric] = []
-        if len(usable) == len(natural) and natural:
+        complete_natural = bool(natural) and len(usable) == len(natural)
+        if complete_natural:
             precision = counts["tp"] / (counts["tp"] + counts["fp"]) if counts["tp"] + counts["fp"] else 0.0
             recall = counts["tp"] / (counts["tp"] + counts["fn"]) if counts["tp"] + counts["fn"] else 0.0
             f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
             for name, value in (("precision", precision), ("recall", recall), ("f1", f1)):
-                metrics.append(QualityMetric(name, value, "host_observed_skill_invocation", len(natural)))
+                metrics.append(QualityMetric(name, value, "host_observed_native_skill_lifecycle", len(natural)))
             status = "PASS"
         else:
+            reason = "host_skill_invocation_not_exposed" if not host_events else "native_skill_lifecycle_evidence_incomplete"
             for name in ("precision", "recall", "f1"):
-                metrics.append(QualityMetric(name, "N/A", "not_observable", 0, "host_skill_invocation_not_exposed"))
+                metrics.append(QualityMetric(name, "N/A", "not_observable", len(usable), reason))
             status = "PARTIAL" if labels else "NO_DATA"
         metrics.extend(
             (
@@ -449,12 +519,16 @@ class SkillRoutingEvaluator:
                 "natural_sample_size": len(natural),
                 "forced_excluded": len(forced),
                 "unknown_case_ids": unknown,
+                "unknown_reasons": unknown_reasons,
+                "natural_observed_sample_size": len(usable),
+                "natural_denominator_completeness": "COMPLETE" if complete_natural else "INCOMPLETE",
+                "selection_bias_risk": "NONE" if complete_natural else "UNKNOWN_DENOMINATOR",
                 "forced_condition": "FORCED_SKILL_CONDITION" if forced else "",
-                "selection_truth": "HOST_OBSERVED" if len(usable) == len(natural) and natural else "NOT_OBSERVABLE",
+                "selection_truth": "HOST_OBSERVED" if complete_natural else "NOT_OBSERVABLE",
             },
             metrics=tuple(metrics),
             results=results,
-            missing_fields=("skill_actual_invocation_observed",) if unknown else (),
+            missing_fields=("skill_actual_invocation_observed", "host_event_ref", "source_scope") if unknown else (),
         )
 
 
@@ -471,6 +545,21 @@ class _ArmExecution:
     output_digest: str
     errors: tuple[str, ...] = ()
     evidence_tier: str = "FIXTURE_EXECUTED"
+    execution_verdict: str = "unknown"
+    runner_id: str = "shutu.skill-three-arm-runner"
+    runner_version: str = "1"
+    host_version: str = "unknown"
+    model_id: str = "unknown"
+    environment_fingerprint: str = ""
+    execution_manifest_hash: str = ""
+    trace_id: str = ""
+    event_refs: tuple[str, ...] = ()
+    artifact_prelaunch_hash: str = ""
+    artifact_runtime_hash: str = ""
+    artifact_postrun_hash: str = ""
+    skill_condition_verified: str = "UNKNOWN"
+    skill_invocation_observed: str = "NOT_OBSERVABLE"
+    evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -484,16 +573,22 @@ class ThreeArmQualityRunner:
     runner_id = "shutu.skill-three-arm-runner"
     runner_version = "1"
 
-    def __init__(self, *, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 30.0,
+        executor: Callable[[str, QualityCase, Path, str, str], Mapping[str, Any] | _ArmExecution] | None = None,
+    ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.timeout_seconds = timeout_seconds
+        self.executor = executor
 
     def run(
         self,
         cases: Sequence[QualityCase],
         artifacts: Mapping[str, str | Path],
-        oracle: Callable[[QualityCase, Any], Mapping[str, Any] | bool],
+        oracle: Callable[[QualityCase, Any], Mapping[str, Any] | bool] | None,
         *,
         oracle_id: str = "quality-oracle",
         oracle_version: str = "1",
@@ -503,6 +598,10 @@ class ThreeArmQualityRunner:
         required = {"no_skill", "baseline", "candidate"}
         if set(artifacts) != required:
             raise ValueError("three-arm artifacts must contain no_skill, baseline, and candidate")
+        if not cases:
+            raise ValueError("three-arm cases cannot be empty")
+        if len({case.case_id for case in cases}) != len(cases):
+            raise ValueError("three-arm case_id must be unique")
         categories = {case.category for case in cases}
         if not {"target", "normal-regression", "holdout"}.issubset(categories):
             raise ValueError("cases must include target, normal-regression, and holdout")
@@ -520,7 +619,10 @@ class ThreeArmQualityRunner:
         results: list[_ArmExecution] = []
         for case in cases:
             for arm in ("no_skill", "baseline", "candidate"):
-                results.append(self._execute(arm, case, *frozen[arm], oracle=oracle, environment_fingerprint=env))
+                if self.executor is None:
+                    results.append(self._execute(arm, case, *frozen[arm], oracle=oracle, environment_fingerprint=env))
+                else:
+                    results.append(self._execute_external(arm, case, *frozen[arm], oracle=oracle, environment_fingerprint=env))
         result_dicts = tuple(item.to_dict() for item in results)
         baseline = {item.case_id: item for item in results if item.arm == "baseline"}
         candidate = {item.case_id: item for item in results if item.arm == "candidate"}
@@ -593,6 +695,86 @@ class ThreeArmQualityRunner:
             persist.save(report)
         return report
 
+    def _execute_external(
+        self,
+        arm: str,
+        case: QualityCase,
+        root: Path,
+        artifact_hash: str,
+        *,
+        oracle: Callable[[QualityCase, Any], Mapping[str, Any] | bool] | None,
+        environment_fingerprint: str,
+    ) -> _ArmExecution:
+        """Run a real executor without giving it the Oracle or another arm's result."""
+
+        try:
+            value = self.executor(arm, case, root, artifact_hash, environment_fingerprint)  # type: ignore[misc]
+        except Exception as exc:  # execution failures remain unknown evidence
+            return _ArmExecution(
+                arm,
+                case.case_id,
+                "failed",
+                "unknown",
+                {"verdict": "unknown", "reason": "executor_error"},
+                artifact_hash,
+                case.task_input_hash,
+                None,
+                "",
+                (type(exc).__name__,),
+                "REAL_AGENT_OBSERVED",
+                environment_fingerprint=environment_fingerprint,
+                skill_condition_verified="UNKNOWN",
+            )
+        if isinstance(value, _ArmExecution):
+            item = value
+            output_for_oracle: Any = value.evidence or value.to_dict()
+        else:
+            payload = dict(value)
+            output_for_oracle = payload.get("oracle_input", payload.get("output", payload))
+            item = _ArmExecution(
+                arm=arm,
+                case_id=case.case_id,
+                execution_status=str(payload.get("execution_status", "failed")),
+                task_result=str(payload.get("task_result", "unknown")),
+                oracle_result=dict(payload.get("oracle_result") or {"verdict": "unknown"}),
+                artifact_hash=artifact_hash,
+                task_input_hash=case.task_input_hash,
+                duration_ms=payload.get("duration_ms"),
+                output_digest=str(payload.get("output_digest") or digest(output_for_oracle)),
+                errors=tuple(str(error) for error in payload.get("errors", ())),
+                evidence_tier=str(payload.get("evidence_tier") or "REAL_AGENT_OBSERVED"),
+                execution_verdict=str(payload.get("execution_verdict") or payload.get("task_result", "unknown")),
+                runner_id=str(payload.get("runner_id") or self.runner_id),
+                runner_version=str(payload.get("runner_version") or self.runner_version),
+                host_version=str(payload.get("host_version") or "unknown"),
+                model_id=str(payload.get("model_id") or "unknown"),
+                environment_fingerprint=str(payload.get("environment_fingerprint") or environment_fingerprint),
+                execution_manifest_hash=str(payload.get("execution_manifest_hash") or ""),
+                trace_id=str(payload.get("trace_id") or ""),
+                event_refs=tuple(str(ref) for ref in payload.get("event_refs", ())),
+                artifact_prelaunch_hash=str(payload.get("artifact_prelaunch_hash") or artifact_hash),
+                artifact_runtime_hash=str(payload.get("artifact_runtime_hash") or ""),
+                artifact_postrun_hash=str(payload.get("artifact_postrun_hash") or ""),
+                skill_condition_verified=str(payload.get("skill_condition_verified") or "UNKNOWN"),
+                skill_invocation_observed=str(payload.get("skill_invocation_observed") or "NOT_OBSERVABLE"),
+                evidence=payload,
+            )
+        if item.execution_status != "completed" or oracle is None:
+            return item
+        try:
+            oracle_value = oracle(case, output_for_oracle)
+            oracle_result = dict(oracle_value) if isinstance(oracle_value, Mapping) else {"passed": bool(oracle_value)}
+            task_result = "success" if oracle_result.get("passed") is True or oracle_result.get("task_result") == "success" or str(oracle_result.get("verdict", "")).casefold() in {"pass", "passed", "success", "ok"} else "failed" if oracle_result.get("passed") is False or oracle_result.get("task_result") == "failed" or str(oracle_result.get("verdict", "")).casefold() in {"fail", "failed", "error"} else "unknown"
+            return _replace_arm(item, task_result=task_result, oracle_result=oracle_result, execution_verdict=task_result)
+        except Exception as exc:
+            return _replace_arm(
+                item,
+                task_result="unknown",
+                oracle_result={"verdict": "unknown", "reason": "oracle_error", "error_type": type(exc).__name__},
+                execution_verdict="unknown",
+                errors=tuple(item.errors) + ("oracle_error",),
+            )
+
     def _execute(
         self,
         arm: str,
@@ -600,14 +782,13 @@ class ThreeArmQualityRunner:
         root: Path,
         artifact_hash: str,
         *,
-        oracle: Callable[[QualityCase, Any], Mapping[str, Any] | bool],
+        oracle: Callable[[QualityCase, Any], Mapping[str, Any] | bool] | None,
         environment_fingerprint: str,
     ) -> _ArmExecution:
-        del environment_fingerprint
         validator = root / "scripts" / "validator.py"
         started = time.perf_counter()
         if not validator.is_file():
-            return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {}, artifact_hash, case.task_input_hash, None, "", ("validator_missing",), "BLOCKED_ENV")
+            return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {"verdict": "unknown", "reason": "validator_missing"}, artifact_hash, case.task_input_hash, None, "", ("validator_missing",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, skill_condition_verified="UNKNOWN")
         try:
             completed = subprocess.run(
                 [sys.executable, str(validator)],
@@ -621,18 +802,313 @@ class ThreeArmQualityRunner:
             )
             duration = max(0, int((time.perf_counter() - started) * 1000))
             if completed.returncode != 0:
-                return _ArmExecution(arm, case.case_id, "failed", "unknown", {}, artifact_hash, case.task_input_hash, duration, "", (f"runner_exit_{completed.returncode}",))
-            output = json.loads(completed.stdout)
-            if _tree_hash(root) != artifact_hash:
-                return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {}, artifact_hash, case.task_input_hash, duration, "", ("artifact_mutated_during_run",), "BLOCKED_ENV")
-            oracle_value = oracle(case, output)
+                return _ArmExecution(arm, case.case_id, "failed", "unknown", {"verdict": "unknown", "reason": "runner_nonzero"}, artifact_hash, case.task_input_hash, duration, "", (f"runner_exit_{completed.returncode}",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, skill_condition_verified="UNKNOWN")
+            try:
+                output = json.loads(completed.stdout)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return _ArmExecution(arm, case.case_id, "failed", "unknown", {"verdict": "unknown", "reason": "result_missing_or_invalid"}, artifact_hash, case.task_input_hash, duration, "", ("result_missing_or_invalid",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, skill_condition_verified="UNKNOWN")
+            runtime_hash = _tree_hash(root)
+            if runtime_hash != artifact_hash:
+                return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {"verdict": "unknown", "reason": "artifact_mutated_during_run"}, artifact_hash, case.task_input_hash, duration, "", ("artifact_mutated_during_run",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, artifact_prelaunch_hash=artifact_hash, artifact_runtime_hash=runtime_hash, artifact_postrun_hash=runtime_hash, skill_condition_verified="FAILED")
+            if oracle is None:
+                return _ArmExecution(arm, case.case_id, "completed", "unknown", {"verdict": "unknown", "reason": "independent_oracle_not_configured"}, artifact_hash, case.task_input_hash, duration, digest(output), ("independent_oracle_not_configured",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, artifact_prelaunch_hash=artifact_hash, artifact_runtime_hash=runtime_hash, artifact_postrun_hash=runtime_hash, skill_condition_verified="VERIFIED")
+            try:
+                oracle_value = oracle(case, output)
+            except Exception as exc:
+                return _ArmExecution(arm, case.case_id, "failed", "unknown", {"verdict": "unknown", "reason": "oracle_error", "error_type": type(exc).__name__}, artifact_hash, case.task_input_hash, duration, digest(output), ("oracle_error",), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, artifact_prelaunch_hash=artifact_hash, artifact_runtime_hash=runtime_hash, artifact_postrun_hash=runtime_hash, skill_condition_verified="VERIFIED")
             oracle_result = dict(oracle_value) if isinstance(oracle_value, Mapping) else {"passed": bool(oracle_value)}
             task_result = "success" if oracle_result.get("passed") is True or oracle_result.get("task_result") == "success" else "failed"
-            return _ArmExecution(arm, case.case_id, "completed", task_result, oracle_result, artifact_hash, case.task_input_hash, duration, digest(output))
+            return _ArmExecution(arm, case.case_id, "completed", task_result, oracle_result, artifact_hash, case.task_input_hash, duration, digest(output), (), "FIXTURE_EXECUTED", task_result, environment_fingerprint=environment_fingerprint, artifact_prelaunch_hash=artifact_hash, artifact_runtime_hash=runtime_hash, artifact_postrun_hash=runtime_hash, skill_condition_verified="VERIFIED")
         except subprocess.TimeoutExpired:
-            return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {}, artifact_hash, case.task_input_hash, None, "", ("runner_timeout",), "BLOCKED_ENV")
+            return _ArmExecution(arm, case.case_id, "blocked_env", "unknown", {"verdict": "unknown", "reason": "runner_timeout"}, artifact_hash, case.task_input_hash, None, "", ("runner_timeout",), "BLOCKED_ENV", environment_fingerprint=environment_fingerprint, skill_condition_verified="UNKNOWN")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return _ArmExecution(arm, case.case_id, "failed", "unknown", {}, artifact_hash, case.task_input_hash, None, "", (type(exc).__name__,))
+            return _ArmExecution(arm, case.case_id, "failed", "unknown", {"verdict": "unknown", "reason": "fixture_error", "error_type": type(exc).__name__}, artifact_hash, case.task_input_hash, None, "", (type(exc).__name__,), "FIXTURE_EXECUTED", environment_fingerprint=environment_fingerprint, skill_condition_verified="UNKNOWN")
+
+
+class RealCodexThreeArmRunner:
+    """Drive the existing CodexRealTaskRunner for an evidence-first pilot."""
+
+    runner_id = "shutu.real-codex-three-arm-runner"
+    runner_version = "1"
+
+    def __init__(
+        self,
+        workspace_or_db: str | Path | M1Database,
+        *,
+        codex_command: str = "codex",
+        timeout_seconds: float = 120.0,
+        model_id: str = "",
+        sandbox: str = "read-only",
+        environment_fingerprint: str = "",
+    ) -> None:
+        self.db = workspace_or_db if isinstance(workspace_or_db, M1Database) else M1Database(workspace_or_db)
+        self.codex_command = codex_command
+        self.timeout_seconds = timeout_seconds
+        self.model_id = model_id
+        self.sandbox = sandbox
+        self.environment_fingerprint = environment_fingerprint or digest(
+            {"runner": self.runner_id, "runner_version": self.runner_version, "sandbox": sandbox}
+        )[:24]
+
+    @staticmethod
+    def _artifact_hash(root: Path) -> str:
+        from .release.artifacts import artifact_tree_hash
+
+        return artifact_tree_hash(root)
+
+    @staticmethod
+    def _validate(cases: Sequence[QualityCase], artifacts: Mapping[str, str | Path]) -> dict[str, tuple[Path, str]]:
+        if set(artifacts) != {"no_skill", "baseline", "candidate"}:
+            raise ValueError("real three-arm artifacts must contain no_skill, baseline, and candidate")
+        if not cases or len({case.case_id for case in cases}) != len(cases):
+            raise ValueError("real three-arm cases must be non-empty and have unique case_id")
+        if not {"target", "normal-regression", "holdout"}.issubset({case.category for case in cases}):
+            raise ValueError("cases must include target, normal-regression, and holdout")
+        frozen: dict[str, tuple[Path, str]] = {}
+        for arm, value in artifacts.items():
+            root = Path(value).expanduser().resolve()
+            if not root.is_dir():
+                raise ValueError(f"artifact root is missing: {arm}")
+            frozen[arm] = (root, RealCodexThreeArmRunner._artifact_hash(root))
+        no_skill_files = [item for item in frozen["no_skill"][0].rglob("SKILL.md") if not item.is_symlink()]
+        if no_skill_files:
+            raise ValueError("no_skill arm still contains a Skill artifact")
+        if frozen["baseline"][1] == frozen["candidate"][1]:
+            raise ValueError("baseline and candidate artifacts must have different frozen hashes")
+        return frozen
+
+    @staticmethod
+    def _condition_verified(
+        arm: str,
+        root: Path,
+        expected_hash: str,
+        workspace: Path,
+        codex_home: str | Path | None,
+    ) -> str:
+        try:
+            if RealCodexThreeArmRunner._artifact_hash(root) != expected_hash or codex_home is None:
+                return "UNVERIFIED"
+            if arm == "no_skill" and any(item.is_file() and not item.is_symlink() for item in workspace.rglob("SKILL.md")):
+                return "FAILED"
+            if arm != "no_skill" and not any(item.is_file() and not item.is_symlink() for item in workspace.rglob("SKILL.md")):
+                return "UNVERIFIED"
+            return "VERIFIED"
+        except (OSError, ValueError):
+            return "UNVERIFIED"
+
+    @staticmethod
+    def _task_result(value: Mapping[str, Any]) -> str:
+        verdict = str(value.get("verdict") or value.get("status") or "").casefold()
+        if value.get("passed") is True or value.get("task_result") == "success" or verdict in {"pass", "passed", "success", "ok"}:
+            return "success"
+        if value.get("passed") is False or value.get("task_result") == "failed" or verdict in {"fail", "failed", "error"}:
+            return "failed"
+        return "unknown"
+
+    def run(
+        self,
+        cases: Sequence[QualityCase],
+        artifacts: Mapping[str, str | Path],
+        oracle: Callable[[QualityCase, Path, Mapping[str, Any]], Mapping[str, Any] | bool] | None,
+        *,
+        experiment_id: str = "",
+        pair_id: str = "",
+        workspaces: Mapping[str, str | Path] | None = None,
+        codex_homes: Mapping[str, str | Path] | None = None,
+        persist: "QualityService | None" = None,
+    ) -> QualityReport:
+        from .adapters.real_agent import CodexRealTaskRunner
+
+        frozen = self._validate(cases, artifacts)
+        experiment_id = experiment_id or new_id("m74-real-skill")
+        pair_id = pair_id or new_id("m74-pair")
+        results: list[_ArmExecution] = []
+        evidence: list[QualityEvidence] = []
+        for case in cases:
+            for arm in ("no_skill", "baseline", "candidate"):
+                root, artifact_hash = frozen[arm]
+                workspace = Path((workspaces or {}).get(arm, root)).expanduser().resolve()
+                home_value = (codex_homes or {}).get(arm)
+                home = Path(home_value).expanduser().resolve() if home_value else None
+                runner = CodexRealTaskRunner(
+                    self.db,
+                    codex_command=self.codex_command,
+                    codex_home=home,
+                    workspace_id=f"{experiment_id}:{arm}",
+                    environment_fingerprint=self.environment_fingerprint,
+                    timeout=self.timeout_seconds,
+                    cwd=workspace,
+                    model_id=self.model_id,
+                    sandbox=self.sandbox,
+                )
+                try:
+                    run_evidence = runner.run(
+                        case_id=case.case_id,
+                        task_input=case.runner_input(),
+                        baseline_or_candidate=arm,
+                        artifact_hash=artifact_hash,
+                        capability_version_id=case.target_skill_id,
+                        pair_id=pair_id,
+                        experiment_id=experiment_id,
+                        task_category=case.category,
+                        artifact_root=root,
+                        codex_home_override=home,
+                        oracle=None,
+                    )
+                    condition = self._condition_verified(arm, root, artifact_hash, workspace, home)
+                except Exception as exc:
+                    run_evidence = None
+                    condition = "UNKNOWN"
+                    error = type(exc).__name__
+                    runner_error_status = "blocked_env" if isinstance(exc, OSError) else "failed"
+                oracle_result: dict[str, Any] = {"verdict": "unknown", "reason": "execution_not_completed"}
+                task_result = "unknown"
+                if run_evidence is not None and run_evidence.execution_status == "completed" and condition == "VERIFIED" and oracle is not None:
+                    try:
+                        value = oracle(case, workspace, run_evidence.to_dict())
+                        oracle_result = dict(value) if isinstance(value, Mapping) else {"passed": bool(value)}
+                        task_result = self._task_result(oracle_result)
+                    except Exception as exc:
+                        oracle_result = {"verdict": "unknown", "reason": "oracle_error", "error_type": type(exc).__name__}
+                elif run_evidence is not None and run_evidence.execution_status != "completed":
+                    oracle_result = {"verdict": "unknown", "reason": "execution_not_completed"}
+                elif run_evidence is not None and oracle is None:
+                    oracle_result = {"verdict": "unknown", "reason": "independent_oracle_not_configured"}
+                else:
+                    oracle_result = {"verdict": "unknown", "reason": "runner_error", "error_type": error}
+                if run_evidence is None:
+                    item = _ArmExecution(
+                        arm, case.case_id, runner_error_status, "unknown", oracle_result, artifact_hash, case.task_input_hash,
+                        None, "", ("runner_error",), "REAL_AGENT_OBSERVED", environment_fingerprint=self.environment_fingerprint,
+                        skill_condition_verified=condition,
+                    )
+                else:
+                    activation = run_evidence.activation_record or {}
+                    item = _ArmExecution(
+                        arm=arm,
+                        case_id=case.case_id,
+                        execution_status=run_evidence.execution_status,
+                        task_result=task_result,
+                        oracle_result=oracle_result,
+                        artifact_hash=artifact_hash,
+                        task_input_hash=case.task_input_hash,
+                        duration_ms=(run_evidence.metrics or {}).get("walltime_ms"),
+                        output_digest=run_evidence.session_run_digest,
+                        errors=(run_evidence.failure_layer,) if run_evidence.failure_layer else (),
+                        evidence_tier=run_evidence.execution_evidence_tier,
+                        execution_verdict="completed" if run_evidence.execution_status == "completed" else "unknown",
+                        runner_id=run_evidence.runner_id,
+                        runner_version=run_evidence.runner_version,
+                        host_version=run_evidence.host_version,
+                        model_id=run_evidence.model_id,
+                        environment_fingerprint=run_evidence.environment_fingerprint,
+                        execution_manifest_hash=run_evidence.execution_manifest_hash,
+                        trace_id=run_evidence.trace_ids[0] if run_evidence.trace_ids else "",
+                        event_refs=run_evidence.event_refs,
+                        artifact_prelaunch_hash=str(activation.get("actual_prelaunch_hash") or artifact_hash),
+                        artifact_runtime_hash=str(activation.get("actual_runtime_hash_or_unknown") or "unknown"),
+                        artifact_postrun_hash=str(activation.get("actual_postrun_hash_or_unknown") or "unknown"),
+                        skill_condition_verified=condition,
+                        skill_invocation_observed="NOT_OBSERVABLE",
+                        evidence=run_evidence.to_dict(),
+                    )
+                    if task_result != "unknown":
+                        item = _replace_arm(item, execution_verdict=task_result, oracle_result=oracle_result)
+                results.append(item)
+                evidence.append(
+                    QualityEvidence(
+                        capability_kind="skill",
+                        capability_id=case.target_skill_id or f"skill-arm:{arm}",
+                        task_case_id=case.case_id,
+                        host="codex",
+                        model_provider="codex-cli",
+                        model_id=item.model_id,
+                        trace_id=item.trace_id or None,
+                        event_refs=item.event_refs,
+                        evidence_tier=item.evidence_tier,
+                        selection_mode="DISABLED" if arm == "no_skill" else "FORCED",
+                        observation_completeness="complete" if item.execution_status == "completed" else "partial",
+                        oracle_id="external-oracle" if oracle else None,
+                        oracle_version="1" if oracle else None,
+                        verdict="IMPROVED" if task_result == "success" else "INCONCLUSIVE",
+                        metrics={
+                            "arm": arm,
+                            "execution_verdict": item.execution_verdict,
+                            "oracle_verdict": oracle_result.get("verdict", oracle_result.get("passed", "unknown")),
+                            "skill_condition_verified": item.skill_condition_verified,
+                            "skill_invocation_observed": item.skill_invocation_observed,
+                            "execution_manifest_hash": item.execution_manifest_hash,
+                            "artifact_prelaunch_hash": item.artifact_prelaunch_hash,
+                            "artifact_runtime_hash": item.artifact_runtime_hash,
+                            "artifact_postrun_hash": item.artifact_postrun_hash,
+                        },
+                        environment_fingerprint=item.environment_fingerprint,
+                        artifact_hash=artifact_hash,
+                        correlation_quality="exact" if item.trace_id else "unknown",
+                        unknown_fields=("skill_lifecycle", "tokens", "cost"),
+                    )
+                )
+        baseline = {item.case_id: item for item in results if item.arm == "baseline"}
+        candidate = {item.case_id: item for item in results if item.arm == "candidate"}
+        unknown = [item.case_id for item in results if item.task_result == "unknown" or item.execution_status != "completed"]
+        regressions = sorted(
+            case_id for case_id in baseline
+            if baseline[case_id].task_result == "success" and candidate[case_id].task_result != "success"
+        )
+        if unknown:
+            benefit = "BLOCKED_ENV" if any(item.execution_status == "blocked_env" for item in results) else "INCONCLUSIVE"
+        elif regressions:
+            benefit = "REGRESSED"
+        else:
+            baseline_success = sum(item.task_result == "success" for item in baseline.values())
+            candidate_success = sum(item.task_result == "success" for item in candidate.values())
+            benefit = "IMPROVED" if candidate_success > baseline_success else "EQUIVALENT"
+        attempted = len(cases) * 3
+        completed = sum(item.execution_status == "completed" for item in results)
+        oracle_verified = sum(item.task_result in {"success", "failed"} for item in results)
+        condition_verified = all(item.skill_condition_verified == "VERIFIED" for item in results)
+        pilot = "PASS" if completed == attempted and oracle_verified == attempted and condition_verified else "BLOCKED_ENV" if any(item.execution_status == "blocked_env" for item in results) else "INCONCLUSIVE"
+        report = QualityReport(
+            report_id=new_id("quality-real-three-arm"),
+            report_kind="skill_real_three_arm",
+            status="PASS" if pilot == "PASS" else "PARTIAL",
+            generated_at=utc_now(),
+            environment_fingerprint=self.environment_fingerprint,
+            summary={
+                "experiment_id": experiment_id,
+                "pair_id": pair_id,
+                "runner_id": self.runner_id,
+                "runner_version": self.runner_version,
+                "pilot_status": pilot,
+                "verdict": benefit,
+                "production_benefit_verdict": benefit if pilot == "PASS" else "INCONCLUSIVE",
+                "real_three_arm_cases_attempted": attempted,
+                "real_three_arm_cases_completed": completed,
+                "real_three_arm_oracle_verified": oracle_verified,
+                "unknown_case_ids": sorted(set(unknown)),
+                "regressions": regressions,
+                "skill_condition_verified": "PASS" if condition_verified else "PARTIAL",
+                "skill_invocation_observed": "NOT_OBSERVABLE",
+                "oracle_independence": "PASS" if oracle is not None else "NOT_CONFIGURED",
+                "artifact_freeze": "PASS" if all(item.artifact_postrun_hash == item.artifact_hash for item in results) else "FAIL",
+                "execution_verdict": {state: sum(item.execution_verdict == state for item in results) for state in ("success", "failed", "unknown", "completed")},
+            },
+            metrics=(
+                QualityMetric("real_cases_attempted", attempted, "real_codex_runner", attempted),
+                QualityMetric("real_cases_completed", completed, "real_codex_runner", attempted, "provider_or_host_blocked" if completed != attempted else ""),
+                QualityMetric("oracle_verified", oracle_verified, "independent_oracle", attempted, "oracle_or_execution_unknown" if oracle_verified != attempted else ""),
+                QualityMetric("task_success_rate.baseline", _rate(results, "baseline"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
+                QualityMetric("task_success_rate.candidate", _rate(results, "candidate"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
+                QualityMetric("tool_call_count", "N/A", "codex_host_not_comparable", 0, "host_usage_not_exposed"),
+                QualityMetric("token_count", "N/A", "codex_host_not_comparable", 0, "provider_usage_not_exposed"),
+            ),
+            evidence=tuple(evidence),
+            results=tuple(item.to_dict() for item in results),
+            missing_fields=("skill_lifecycle", "tokens", "cost", "desktop_events"),
+        )
+        if persist:
+            persist.save(report)
+        return report
 
 
 def _rate(results: Sequence[_ArmExecution], arm: str) -> float | str:
@@ -640,6 +1116,10 @@ def _rate(results: Sequence[_ArmExecution], arm: str) -> float | str:
     if not values or any(item.task_result == "unknown" for item in values):
         return "N/A"
     return sum(item.task_result == "success" for item in values) / len(values)
+
+
+def _replace_arm(item: _ArmExecution, **changes: Any) -> _ArmExecution:
+    return replace(item, **changes)
 
 
 class JointAttribution:
@@ -721,15 +1201,28 @@ class QualityService:
             return {"status": "NO_DATA", "data_status": "NO_DATA", "source": "quality_runs", "summary": None, "reports": []}
         metric_values: dict[str, list[Any]] = {}
         missing: set[str] = set()
+        evidence_tiers: dict[str, int] = {}
+        unknown_count = 0
         for report in reports:
             for metric in report.get("metrics", []):
                 metric_values.setdefault(str(metric.get("name")), []).append(metric.get("value"))
             missing.update(str(value) for value in report.get("missing_fields", []))
+            for item in report.get("evidence", []):
+                tier = str(item.get("evidence_tier") or "UNKNOWN")
+                evidence_tiers[tier] = evidence_tiers.get(tier, 0) + 1
+            unknown_count += len(report.get("summary", {}).get("unknown_case_ids", []))
         return {
             "status": "PASS",
             "data_status": "OBSERVED",
             "source": "quality_runs",
-            "summary": {"report_count": len(reports), "metric_values": metric_values, "missing_fields": sorted(missing)},
+            "summary": {
+                "report_count": len(reports),
+                "metric_values": metric_values,
+                "missing_fields": sorted(missing),
+                "evidence_tier_counts": evidence_tiers,
+                "unknown_case_count": unknown_count,
+                "production_benefit_verdicts": [item.get("summary", {}).get("production_benefit_verdict", item.get("summary", {}).get("verdict", "INCONCLUSIVE")) for item in reports],
+            },
             "reports": [{"report_id": item.get("report_id"), "report_kind": item.get("report_kind"), "status": item.get("status"), "generated_at": item.get("generated_at"), "summary": item.get("summary", {})} for item in reports],
             "recommendations": [] if not missing else [{"type": "verification", "required": sorted(missing)}],
         }
@@ -787,6 +1280,7 @@ __all__ = [
     "SkillRegistry",
     "SkillRoutingEvaluator",
     "SkillSelectionLabel",
+    "RealCodexThreeArmRunner",
     "ThreeArmQualityRunner",
     "digest",
 ]

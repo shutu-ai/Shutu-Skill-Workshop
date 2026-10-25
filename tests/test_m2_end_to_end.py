@@ -89,7 +89,9 @@ class M2EndToEndTests(unittest.TestCase):
                 {trace.adapter_id for trace in ingestor.traces.list_traces()},
                 {"codex", "opencode", "mcp-observer-stdio"},
             )
-            self.assertTrue(all(trace.observation_completeness != "complete" for trace in ingestor.traces.list_traces()))
+            mcp_trace = next(trace for trace in ingestor.traces.list_traces() if trace.adapter_id == "mcp-observer-stdio")
+            self.assertEqual(mcp_trace.observation_completeness, "complete")
+            self.assertTrue(all(trace.observation_completeness != "complete" for trace in ingestor.traces.list_traces() if trace.adapter_id != "mcp-observer-stdio"))
 
 
 if __name__ == "__main__":

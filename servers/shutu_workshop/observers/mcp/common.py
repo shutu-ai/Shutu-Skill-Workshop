@@ -137,6 +137,8 @@ class ObserverReport:
     errors: list[str] = field(default_factory=list)
     stderr_summary: str = ""
     trace_id: str = ""
+    session_close_status: str = "PARTIAL"
+    pending_request_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -298,7 +300,9 @@ class McpTraceRecorder:
                 seq=event_seq,
                 type=event_type,
                 actor="client" if direction == "client_to_server" else "server",
-                event_id=f"{self.adapter_id}:{direction}:{event_seq}",
+                # Event IDs are global in the shared ledger; a direction-local
+                # sequence is not unique across independent MCP sessions.
+                event_id=f"{self.adapter_id}:{self.trace_id}:{direction}:{event_seq}",
                 occurred_at=utc_now(),
                 duration_ms=self._response_duration(pending_key),
                 capability_id=self._tool_capability(tool_name),
@@ -375,13 +379,21 @@ class McpTraceRecorder:
     def close(self, *, status: str = "incomplete") -> ObserverReport:
         if self._closed:
             return self.report
+        with self._pending_lock:
+            pending_count = len(self._pending)
+        self.report.pending_request_count = pending_count
+        complete = status == "ok" and pending_count == 0 and not self.report.errors
+        if not complete and status == "ok":
+            self.report.errors.append("session_close_incomplete")
+        effective_status = "ok" if complete else (status if status in Trace.STATUSES else "incomplete")
+        self.report.session_close_status = "COMPLETE" if complete else "PARTIAL"
         if self.ingestor and self._started and self.ingestor.traces.get(self.trace_id):
             try:
                 self.ingestor.close(
                     self.trace_id,
-                    status if status in Trace.STATUSES else "incomplete",
+                    effective_status,
                     task_result="unknown",
-                    observation_completeness="partial",
+                    observation_completeness="complete" if complete else "partial",
                 )
             except Exception as exc:
                 self._record_failure(exc)

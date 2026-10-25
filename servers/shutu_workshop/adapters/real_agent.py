@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -53,6 +53,7 @@ class ArtifactActivationRecord:
     activation_evidence_refs: tuple[str, ...]
     activated_at: str
     reason: str = ""
+    actual_postrun_hash_or_unknown: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -123,6 +124,7 @@ class CodexRealTaskRunner:
         cwd: str | Path | None = None,
         model_id: str = "",
         extra_args: Sequence[str] = (),
+        sandbox: str = "read-only",
     ) -> None:
         self.db = workspace_or_db if isinstance(workspace_or_db, M1Database) else M1Database(workspace_or_db)
         self.ingestor = TraceIngestor(self.db)
@@ -137,6 +139,9 @@ class CodexRealTaskRunner:
         self.cwd = Path(cwd).resolve() if cwd else None
         self.model_id = model_id
         self.extra_args = tuple(str(item) for item in extra_args)
+        if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+            raise ValueError("unsupported Codex sandbox")
+        self.sandbox = sandbox
 
     def configure_mcp_server(
         self,
@@ -355,8 +360,8 @@ class CodexRealTaskRunner:
         """Verify the bytes and, when configured, probe the actual side server."""
 
         side = str(side)
-        if side not in {"baseline", "candidate"}:
-            raise ValueError("side must be baseline or candidate")
+        if side not in {"no_skill", "baseline", "candidate"}:
+            raise ValueError("side must be no_skill, baseline, or candidate")
         root = Path(artifact_root).resolve() if artifact_root else None
         actual_prelaunch = ""
         reason = ""
@@ -373,6 +378,11 @@ class CodexRealTaskRunner:
                 if actual_prelaunch != expected_artifact_hash:
                     status = "MISMATCH"
                     reason = "declared_vs_actual_hash"
+                elif side == "no_skill" and any(
+                    item.is_file() and not item.is_symlink() for item in root.rglob("SKILL.md")
+                ):
+                    status = "MISMATCH"
+                    reason = "no_skill_skill_leak"
                 elif not server_command:
                     reason = "server_command_not_supplied"
                 elif not self._command_belongs_to_artifact(server_command, root, root):
@@ -457,8 +467,8 @@ class CodexRealTaskRunner:
         mcp_server_name: str = "",
         codex_home_override: str | Path | None = None,
     ) -> RealAgentRunEvidence:
-        if baseline_or_candidate not in {"baseline", "candidate"}:
-            raise ValueError("baseline_or_candidate must be baseline or candidate")
+        if baseline_or_candidate not in {"no_skill", "baseline", "candidate"}:
+            raise ValueError("baseline_or_candidate must be no_skill, baseline, or candidate")
         if not case_id or not artifact_hash:
             raise ValueError("case_id and artifact_hash are required")
         pair_id = pair_id or new_id("pair")
@@ -586,7 +596,7 @@ class CodexRealTaskRunner:
             "--json",
             "--ephemeral",
             "--sandbox",
-            "read-only",
+            self.sandbox,
             "--skip-git-repo-check",
         ]
         if self.cwd:
@@ -614,6 +624,15 @@ class CodexRealTaskRunner:
             timeout=self.timeout,
             trace_id=trace_id,
         )
+        postrun_hash = "unknown"
+        artifact_mutated = False
+        if artifact_root:
+            try:
+                postrun_hash = self._artifact_hash(artifact_root)
+                artifact_mutated = postrun_hash != artifact_hash
+            except (OSError, ValueError):
+                postrun_hash = "unknown"
+        activation = replace(activation, actual_postrun_hash_or_unknown=postrun_hash)
         events = self.traces.list_events(trace_id)
         self._bind_trace(
             trace_id,
@@ -648,11 +667,15 @@ class CodexRealTaskRunner:
         verdict = str(oracle_result.get("verdict") or oracle_result.get("status") or "unknown")
         task_result = "success" if verdict in {"pass", "passed", "success", "ok"} else ("failed" if verdict in {"fail", "failed", "error"} else "unknown")
         blocked_env, blocked_reason = self._environment_blocked(capture, events)
+        if artifact_mutated:
+            task_result = "unknown"
+            oracle_result = {"verdict": "unknown", "reason": "artifact_mutated_during_run"}
+            blocked_reason = "artifact_mutated_during_run"
         trace = self.traces.get(trace_id)
         if trace is not None:
             self.traces.close(
                 trace_id,
-                "ok" if capture.exit_code == 0 and not capture.timed_out else "failed",
+                "ok" if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated else "failed",
                 task_result=task_result,
                 observation_completeness="complete" if capture.exit_code == 0 and not capture.timed_out else "partial",
             )
@@ -677,7 +700,7 @@ class CodexRealTaskRunner:
         )
         execution_evidence_tier = (
             "REAL_TASK_EXECUTED"
-            if codex_tool_call and activation.activation_status == "VERIFIED" and task_result in {"success", "failed"}
+            if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated and task_result in {"success", "failed"}
             else "REAL_MCP_TOOL_EXECUTED"
             if codex_tool_call and activation.activation_status == "VERIFIED"
             else "REAL_AGENT_OBSERVED"
@@ -700,7 +723,7 @@ class CodexRealTaskRunner:
             event_refs=event_refs,
             observed_tool_calls=tool_calls,
             missing_fields=missing_fields,
-            execution_status="completed" if capture.exit_code == 0 and not capture.timed_out else "blocked_env" if blocked_env else "failed",
+            execution_status="blocked_env" if blocked_env or artifact_mutated else "completed" if capture.exit_code == 0 and not capture.timed_out else "failed",
             task_result=task_result,
             oracle_result=oracle_result,
             observation_completeness="complete" if capture.exit_code == 0 and not capture.timed_out else "partial",
@@ -730,7 +753,7 @@ class CodexRealTaskRunner:
             activation_status=activation.activation_status,
             activation_record=activation.to_dict(),
             execution_evidence_tier=execution_evidence_tier,
-            failure_layer=blocked_reason or ("activation" if activation.activation_status != "VERIFIED" else ""),
+            failure_layer=blocked_reason or ("activation" if activation.activation_status == "MISMATCH" else ""),
         )
         return self._persist(evidence)
 
@@ -872,6 +895,8 @@ class CodexRealTaskRunner:
     def _environment_blocked(capture: CaptureResult, events: list[TraceEvent]) -> tuple[bool, str]:
         if capture.timed_out:
             return True, "timeout"
+        if capture.exit_code is None and not capture.stdout:
+            return True, "cli_unavailable"
         tool_events = [event for event in events if event.type in {"tool.started", "tool.result", "mcp.tool_call", "mcp.tool_result"}]
         text = f"{capture.stdout}\n{capture.stderr_summary}".casefold()
         if not tool_events and any(
@@ -1066,6 +1091,13 @@ def codex_preflight(
     provider_command.append("Return the single word READY.")
     provider_result = _bounded_command(provider_command, env=environment, cwd=active_cwd, timeout=timeout)
     provider_status, error_class, failure_layer, blocked_reason = _classify_provider_result(provider_result)
+    proxy_names = tuple(
+        name for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy")
+        if name in environment
+    )
+    provider_401_rca = ""
+    if error_class == "AUTHENTICATION":
+        provider_401_rca = "isolated_home_provider_auth_failed_or_provider_route_mismatch; authenticate only in the isolated HOME and compare provider scope"
     runner = CodexRealTaskRunner(
         workspace_or_db,
         codex_command=command,
@@ -1105,7 +1137,9 @@ def codex_preflight(
         "provider_version": version,
         "model_id": model_id,
         "home_scope": home_scope,
+        "home_path_present": bool(active_home),
         "home_config_fingerprint": runner._config_fingerprint(active_home) if active_home else "",
+        "proxy_env_present": {name: True for name in proxy_names},
         "mcp_registration": "PASS" if registration.get("ok") else "UNVERIFIED" if not registration else "BLOCKED_ENV",
         "mcp_tools_list": "PASS" if mcp_probe.get("tools_list") else "UNVERIFIED" if not mcp_probe else "BLOCKED_ENV",
         "mcp_tool_call": "PASS" if mcp_probe.get("tool_call") and mcp_probe.get("tool_result") else "UNVERIFIED" if not mcp_probe else "BLOCKED_ENV",
@@ -1119,6 +1153,7 @@ def codex_preflight(
         "failure_layer": failure_layer,
         "error_class": error_class,
         "blocked_reason": blocked_reason,
+        "provider_401_rca": provider_401_rca,
         "checked_at": utc_now(),
         "evidence_digest": "",
         "raw_output_persisted": False,

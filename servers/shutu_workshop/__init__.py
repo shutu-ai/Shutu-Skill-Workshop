@@ -29,6 +29,7 @@ from .quality import (
     SkillRegistry,
     SkillRoutingEvaluator,
     SkillSelectionLabel,
+    RealCodexThreeArmRunner,
     ThreeArmQualityRunner,
 )
 from .mcp_quality import ThirdPartyMcpManager, ThirdPartyMcpRegistration
@@ -159,6 +160,7 @@ __all__ = [
     "SkillRegistry",
     "SkillRoutingEvaluator",
     "SkillSelectionLabel",
+    "RealCodexThreeArmRunner",
     "ThreeArmQualityRunner",
     "ThirdPartyMcpManager",
     "ThirdPartyMcpRegistration",

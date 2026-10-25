@@ -179,10 +179,16 @@ class PortableService:
         if not rows:
             return {"status": "NO_DATA", "data_status": "NO_DATA", "source": "portable.sqlite", "summary": None, "reports": []}
         reports = []
+        evidence_tiers: dict[str, int] = {}
+        unknown_count = 0
         for row in rows:
             payload = _decode(row.pop("report_json"), {})
+            for item in payload.get("evidence", []):
+                tier = str(item.get("evidence_tier") or "UNKNOWN")
+                evidence_tiers[tier] = evidence_tiers.get(tier, 0) + 1
+            unknown_count += len(payload.get("summary", {}).get("unknown_case_ids", []))
             reports.append({"report_id": row["run_id"], "report_kind": row["report_kind"], "status": row["status"], "generated_at": row["created_at"], "summary": payload.get("summary", {})})
-        return {"status": "PASS", "data_status": "OBSERVED", "source": "portable.sqlite", "summary": {"report_count": len(reports)}, "reports": reports, "recommendations": []}
+        return {"status": "PASS", "data_status": "OBSERVED", "source": "portable.sqlite", "summary": {"report_count": len(reports), "evidence_tier_counts": evidence_tiers, "unknown_case_count": unknown_count}, "reports": reports, "recommendations": []}
 
     def quality_detail(self, args: dict[str, Any]) -> dict[str, Any]:
         report_id = str(args.get("report_id") or "")
