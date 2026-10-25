@@ -384,6 +384,9 @@ class CodexRealTaskRunner:
                     status = "MISMATCH"
                     reason = "no_skill_skill_leak"
                 elif not server_command:
+                    # No MCP activation is requested; the frozen prelaunch tree
+                    # is also the runtime tree at this boundary.
+                    actual_runtime = actual_prelaunch
                     reason = "server_command_not_supplied"
                 elif not self._command_belongs_to_artifact(server_command, root, root):
                     reason = "server_command_not_bound_to_artifact"
@@ -416,9 +419,7 @@ class CodexRealTaskRunner:
                     else:
                         status = "UNVERIFIED"
                         reason = "mcp_handshake_incomplete"
-        runtime = "unknown"
-        if status in {"VERIFIED", "MISMATCH"} and actual_prelaunch:
-            runtime = locals().get("actual_runtime", actual_prelaunch)
+        runtime = str(locals().get("actual_runtime", "unknown")) if actual_prelaunch else "unknown"
         evidence_refs = tuple(locals().get("probe", {}).get("event_refs", ()))
         connection_scope = dict(locals().get("probe", {}).get("connection_scope", {}))
         if locals().get("probe", {}).get("trace_id"):
@@ -626,12 +627,14 @@ class CodexRealTaskRunner:
         )
         postrun_hash = "unknown"
         artifact_mutated = False
+        artifact_hash_unavailable = False
         if artifact_root:
             try:
                 postrun_hash = self._artifact_hash(artifact_root)
                 artifact_mutated = postrun_hash != artifact_hash
             except (OSError, ValueError):
                 postrun_hash = "unknown"
+                artifact_hash_unavailable = True
         activation = replace(activation, actual_postrun_hash_or_unknown=postrun_hash)
         events = self.traces.list_events(trace_id)
         self._bind_trace(
@@ -667,15 +670,16 @@ class CodexRealTaskRunner:
         verdict = str(oracle_result.get("verdict") or oracle_result.get("status") or "unknown")
         task_result = "success" if verdict in {"pass", "passed", "success", "ok"} else ("failed" if verdict in {"fail", "failed", "error"} else "unknown")
         blocked_env, blocked_reason = self._environment_blocked(capture, events)
-        if artifact_mutated:
+        if artifact_mutated or artifact_hash_unavailable:
             task_result = "unknown"
-            oracle_result = {"verdict": "unknown", "reason": "artifact_mutated_during_run"}
-            blocked_reason = "artifact_mutated_during_run"
+            reason = "artifact_mutated_during_run" if artifact_mutated else "artifact_hash_unavailable"
+            oracle_result = {"verdict": "unknown", "reason": reason}
+            blocked_reason = reason
         trace = self.traces.get(trace_id)
         if trace is not None:
             self.traces.close(
                 trace_id,
-                "ok" if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated else "failed",
+                "ok" if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated and not artifact_hash_unavailable else "failed",
                 task_result=task_result,
                 observation_completeness="complete" if capture.exit_code == 0 and not capture.timed_out else "partial",
             )
@@ -700,7 +704,7 @@ class CodexRealTaskRunner:
         )
         execution_evidence_tier = (
             "REAL_TASK_EXECUTED"
-            if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated and task_result in {"success", "failed"}
+            if capture.exit_code == 0 and not capture.timed_out and not artifact_mutated and not artifact_hash_unavailable and task_result in {"success", "failed"}
             else "REAL_MCP_TOOL_EXECUTED"
             if codex_tool_call and activation.activation_status == "VERIFIED"
             else "REAL_AGENT_OBSERVED"
@@ -723,7 +727,7 @@ class CodexRealTaskRunner:
             event_refs=event_refs,
             observed_tool_calls=tool_calls,
             missing_fields=missing_fields,
-            execution_status="blocked_env" if blocked_env or artifact_mutated else "completed" if capture.exit_code == 0 and not capture.timed_out else "failed",
+            execution_status="blocked_env" if blocked_env or artifact_mutated or artifact_hash_unavailable else "completed" if capture.exit_code == 0 and not capture.timed_out else "failed",
             task_result=task_result,
             oracle_result=oracle_result,
             observation_completeness="complete" if capture.exit_code == 0 and not capture.timed_out else "partial",

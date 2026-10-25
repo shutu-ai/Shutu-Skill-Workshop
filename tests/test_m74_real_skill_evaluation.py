@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from shutu_workshop import (
     CodexRealTaskRunner,
     M1Database,
     QualityCase,
     RealCodexThreeArmRunner,
+    RealAgentRunEvidence,
     SkillRoutingEvaluator,
     SkillSelectionLabel,
     ThreeArmQualityRunner,
@@ -136,6 +139,124 @@ class M74EvidenceIntegrityTests(unittest.TestCase):
         frozen = RealCodexThreeArmRunner._validate(self._cases(), {"no_skill": no_skill, "baseline": baseline, "candidate": candidate})
         self.assertEqual(set(frozen), {"no_skill", "baseline", "candidate"})
         self.assertNotEqual(frozen["baseline"][1], frozen["candidate"][1])
+
+    def test_completed_run_with_unverified_condition_stays_unknown_without_oracle(self) -> None:
+        no_skill = self.root / "no-skill"
+        baseline = self.root / "baseline"
+        candidate = self.root / "candidate"
+        self._arm(no_skill, "none", skill=False)
+        self._arm(baseline, "target", skill=True)
+        self._arm(candidate, "target-candidate", skill=True)
+        homes = {arm: self.root / f"home-{arm}" for arm in ("no_skill", "baseline", "candidate")}
+        cases = self._cases()
+
+        def unexpected_oracle(*_args: object) -> dict[str, object]:
+            raise AssertionError("Oracle must not receive an unverified arm")
+
+        fake = RealAgentRunEvidence(
+            case_id="target",
+            pair_id="pair",
+            experiment_id="experiment",
+            host="codex",
+            host_version="codex-cli test",
+            model_id="test-model",
+            runner_id="test-runner",
+            runner_version="1",
+            workspace_id="workspace",
+            environment_fingerprint="env",
+            baseline_or_candidate="baseline",
+            artifact_hash="artifact",
+            capability_version_id="skill:target",
+            trace_ids=("trace",),
+            event_refs=("event",),
+            observed_tool_calls=(),
+            missing_fields=(),
+            execution_status="completed",
+            task_result="unknown",
+            oracle_result={"verdict": "unknown"},
+            observation_completeness="complete",
+            source_evidence_tier="REAL_AGENT_OBSERVED",
+            session_run_digest="digest",
+            execution_manifest_hash="manifest",
+            captured_at="now",
+            metrics={"walltime_ms": 1},
+            execution_evidence_tier="REAL_TASK_EXECUTED",
+        )
+        with patch("shutu_workshop.adapters.real_agent.CodexRealTaskRunner.run", return_value=fake):
+            report = RealCodexThreeArmRunner(self.workspace).run(
+                cases,
+                {"no_skill": no_skill, "baseline": baseline, "candidate": candidate},
+                unexpected_oracle,
+                codex_homes=homes,
+            )
+        self.assertEqual(report.summary["real_three_arm_cases_completed"], 9)
+        self.assertEqual(report.summary["real_three_arm_oracle_verified"], 0)
+        self.assertEqual(report.summary["pilot_status"], "INCONCLUSIVE")
+        self.assertEqual(report.summary["production_benefit_verdict"], "UNVERIFIED")
+        self.assertTrue(all(item["task_result"] == "unknown" for item in report.results))
+        self.assertTrue(all(item.verdict == "INCONCLUSIVE" for item in report.evidence))
+
+    def test_no_skill_rejects_target_from_isolated_home_and_candidate_requires_discovery_path(self) -> None:
+        no_skill = self.root / "no-skill"
+        candidate = self.root / "candidate"
+        workspace = self.root / "candidate-workspace"
+        home = self.root / "isolated-home"
+        empty_home = self.root / "empty-home"
+        self._arm(no_skill, "none", skill=False)
+        self._arm(candidate, "target", skill=True)
+        (home / "skills" / "target").mkdir(parents=True)
+        (home / "skills" / "target" / "SKILL.md").write_text("---\nname: target\n---\n", encoding="utf-8")
+        no_skill_status = RealCodexThreeArmRunner._condition_verified(
+            "no_skill", no_skill, RealCodexThreeArmRunner._artifact_hash(no_skill), no_skill, home,
+            target_skill_id="skill:target",
+        )
+        candidate_status = RealCodexThreeArmRunner._condition_verified(
+            "candidate", candidate, RealCodexThreeArmRunner._artifact_hash(candidate), workspace, empty_home,
+            target_skill_id="skill:target",
+        )
+        self.assertEqual(no_skill_status, "FAILED")
+        self.assertEqual(candidate_status, "UNVERIFIED")
+
+    def test_host_observed_inventory_can_verify_only_the_matching_deployed_candidate(self) -> None:
+        candidate = self.root / "candidate"
+        workspace = self.root / "candidate-workspace"
+        home = self.root / "isolated-home"
+        self._arm(candidate, "target", skill=True)
+        deployed = workspace / ".agents" / "skills" / "target"
+        deployed.parent.mkdir(parents=True)
+        shutil.copytree(candidate, deployed)
+        artifact_hash = RealCodexThreeArmRunner._artifact_hash(candidate)
+        status, evidence = RealCodexThreeArmRunner._condition_check(
+            "candidate", candidate, artifact_hash, workspace, home,
+            target_skill_id="skill:target",
+            host_skill_inventory={
+                "evidence_tier": "HOST_OBSERVED",
+                "entries": [{"name": "target", "content_hash": artifact_hash}],
+            },
+        )
+        self.assertEqual(status, "VERIFIED")
+        self.assertEqual(evidence["inventory_evidence_tier"], "HOST_OBSERVED")
+
+    def test_fixture_comparison_keeps_holdout_regression_out_of_improvement(self) -> None:
+        no_skill = self.root / "no-skill"
+        baseline = self.root / "baseline"
+        candidate = self.root / "candidate"
+        self._arm(no_skill, "same", skill=False)
+        self._arm(baseline, "baseline", skill=True)
+        self._arm(candidate, "candidate", skill=True)
+
+        def oracle(case: QualityCase, output: object) -> dict[str, object]:
+            expected = "candidate" if case.category == "target" else "baseline"
+            return {"passed": isinstance(output, dict) and output.get("answer") == expected}
+
+        report = ThreeArmQualityRunner().run(
+            self._cases(),
+            {"no_skill": no_skill, "baseline": baseline, "candidate": candidate},
+            oracle,
+        )
+        self.assertEqual(report.summary["verdict"], "REGRESSED")
+        self.assertEqual(report.summary["holdout_regressions"], ["holdout"])
+        self.assertTrue(all(item.verdict == "INCONCLUSIVE" for item in report.evidence))
 
 
 if __name__ == "__main__":

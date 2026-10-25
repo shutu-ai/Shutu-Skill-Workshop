@@ -559,6 +559,8 @@ class _ArmExecution:
     artifact_postrun_hash: str = ""
     skill_condition_verified: str = "UNKNOWN"
     skill_invocation_observed: str = "NOT_OBSERVABLE"
+    condition_reason: str = ""
+    effective_skill_inventory: tuple[dict[str, Any], ...] = ()
     evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -627,6 +629,7 @@ class ThreeArmQualityRunner:
         baseline = {item.case_id: item for item in results if item.arm == "baseline"}
         candidate = {item.case_id: item for item in results if item.arm == "candidate"}
         unknown = [item.case_id for item in results if item.task_result == "unknown"]
+        regressions: list[str] = []
         if unknown:
             verdict = "BLOCKED_ENV" if all(item.execution_status in {"blocked_env", "not_executed"} for item in results if item.task_result == "unknown") else "INCONCLUSIVE"
         else:
@@ -639,6 +642,8 @@ class ThreeArmQualityRunner:
                 verdict = "EQUIVALENT"
             else:
                 verdict = "REGRESSED"
+        holdout_ids = {case.case_id for case in cases if case.holdout or case.category == "holdout"}
+        holdout_regressions = [case_id for case_id in regressions if case_id in holdout_ids]
         metrics = (
             QualityMetric("task_success_rate.no_skill", _rate(results, "no_skill"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
             QualityMetric("task_success_rate.baseline", _rate(results, "baseline"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
@@ -658,8 +663,9 @@ class ThreeArmQualityRunner:
                 observation_completeness="complete" if item.execution_status == "completed" else "unknown",
                 oracle_id=oracle_id,
                 oracle_version=oracle_version,
-                verdict=verdict,
-                metrics={"task_result": item.task_result, "duration_ms": item.duration_ms},
+                # A single arm is not a comparison verdict.
+                verdict="INCONCLUSIVE",
+                metrics={"task_result": item.task_result, "duration_ms": item.duration_ms, "comparison_verdict": verdict},
                 environment_fingerprint=env,
                 artifact_hash=item.artifact_hash,
                 correlation_quality="derived",
@@ -683,6 +689,8 @@ class ThreeArmQualityRunner:
                 "arm_artifact_hashes": {arm: value[1] for arm, value in frozen.items()},
                 "case_categories": {category: sum(case.category == category for case in cases) for category in sorted(categories)},
                 "unknown_case_ids": sorted(set(unknown)),
+            "regressions": regressions,
+            "holdout_regressions": holdout_regressions,
                 "skill_actual_invocation_observed": False,
                 "skill_invocation_evidence": "NOT_OBSERVABLE",
             },
@@ -878,23 +886,213 @@ class RealCodexThreeArmRunner:
         return frozen
 
     @staticmethod
-    def _condition_verified(
+    def _isolated_home(value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        home = Path(value).expanduser().resolve()
+        user_home = Path.home().resolve()
+        if home in {user_home, user_home / ".codex"}:
+            return None
+        return home
+
+    @staticmethod
+    def _skill_name(skill_file: Path) -> str:
+        try:
+            for line in skill_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().casefold().startswith("name:"):
+                    value = line.split(":", 1)[1].strip().strip("'\"")
+                    if value:
+                        return value
+        except (OSError, UnicodeError):
+            pass
+        return skill_file.parent.name
+
+    @classmethod
+    def _effective_skill_inventory(
+        cls,
+        root: Path,
+        workspace: Path,
+        codex_home: Path | None,
+        target_skill_name: str = "",
+    ) -> tuple[dict[str, Any], ...]:
+        """Scan only candidate Skill roots; this is not native Host truth."""
+
+        roots: list[tuple[Path, str, str]] = []
+        seen_roots: set[Path] = set()
+
+        def add(path: Path, scope: str, source_kind: str) -> None:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return
+            if resolved in seen_roots or not resolved.is_dir():
+                return
+            seen_roots.add(resolved)
+            roots.append((resolved, scope, source_kind))
+
+        for parent in (workspace, *workspace.parents):
+            add(parent / ".agents" / "skills", "project" if parent == workspace else "global", "agents_skills")
+        if codex_home is not None:
+            add(codex_home / "skills", "global", "codex_home_skills")
+            add(codex_home / ".agents" / "skills", "global", "codex_home_agents_skills")
+            add(codex_home / "plugins", "plugin", "codex_home_plugin")
+        user_home = Path.home().resolve()
+        add(user_home / ".agents" / "skills", "global", "user_agents_skills")
+        add(user_home / ".codex" / "skills", "global", "user_codex_skills")
+
+        entries: list[dict[str, Any]] = []
+        seen_files: set[Path] = set()
+        for scan_root, scope, source_kind in roots:
+            try:
+                if source_kind == "codex_home_plugin":
+                    # Plugins may nest skills, but keep the probe bounded.
+                    skill_files = sorted(scan_root.rglob("SKILL.md"), key=lambda item: item.as_posix().casefold())[:256]
+                else:
+                    skill_files = [scan_root / "SKILL.md"]
+                    skill_files.extend(
+                        item / "SKILL.md"
+                        for item in sorted(scan_root.iterdir(), key=lambda value: value.as_posix().casefold())
+                        if item.is_dir()
+                    )
+            except OSError:
+                continue
+            for skill_file in skill_files:
+                try:
+                    if skill_file in seen_files or skill_file.is_symlink() or not skill_file.is_file():
+                        continue
+                    skill_file = skill_file.resolve()
+                    skill_file.relative_to(scan_root)
+                    skill_root = skill_file.parent
+                    name = cls._skill_name(skill_file)
+                    if target_skill_name and name != target_skill_name:
+                        content_hash = digest({"skill_md_sha256": hashlib.sha256(skill_file.read_bytes()).hexdigest()})
+                        content_hash_scope = "skill_md_only"
+                    else:
+                        content_hash = cls._artifact_hash(skill_root)
+                        content_hash_scope = "skill_tree"
+                except (OSError, ValueError):
+                    continue
+                seen_files.add(skill_file)
+                relative = skill_file.relative_to(scan_root).parent.as_posix()
+                entries.append(
+                    {
+                        "name": name,
+                        "scope": scope,
+                        "source_kind": source_kind,
+                        "path_digest": digest({"scope": scope, "relative": relative}),
+                        "content_hash": content_hash,
+                        "content_hash_scope": content_hash_scope,
+                        "version_id": "skill-version-" + digest({"name": name, "content_hash": content_hash})[:24],
+                        "host_detection": "filesystem_scan",
+                        "host_observed": False,
+                        "observed_at": utc_now(),
+                    }
+                )
+        return tuple(entries)
+
+    @staticmethod
+    def _target_skill_name(target_skill_id: str, root: Path) -> str:
+        value = str(target_skill_id or "").rsplit(":", 1)[-1].strip()
+        return value or root.name
+
+    @classmethod
+    def _condition_check(
+        cls,
         arm: str,
         root: Path,
         expected_hash: str,
         workspace: Path,
         codex_home: str | Path | None,
-    ) -> str:
+        *,
+        target_skill_id: str = "",
+        host_skill_inventory: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,
+        activation_record: Mapping[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        home = cls._isolated_home(codex_home)
+        inventory: tuple[dict[str, Any], ...] = ()
+        evidence: dict[str, Any] = {
+            "inventory_evidence_tier": "UNVERIFIED",
+            "host_discovery_observed": False,
+            "effective_skill_inventory": [],
+        }
         try:
-            if RealCodexThreeArmRunner._artifact_hash(root) != expected_hash or codex_home is None:
-                return "UNVERIFIED"
-            if arm == "no_skill" and any(item.is_file() and not item.is_symlink() for item in workspace.rglob("SKILL.md")):
-                return "FAILED"
-            if arm != "no_skill" and not any(item.is_file() and not item.is_symlink() for item in workspace.rglob("SKILL.md")):
-                return "UNVERIFIED"
-            return "VERIFIED"
+            if home is None:
+                return "UNVERIFIED", {**evidence, "reason": "isolated_codex_home_required"}
+            if cls._artifact_hash(root) != expected_hash:
+                return "FAILED", {**evidence, "reason": "artifact_hash_changed", "artifact_hash": expected_hash}
+            if activation_record:
+                for key in ("actual_prelaunch_hash", "actual_runtime_hash_or_unknown", "actual_postrun_hash_or_unknown"):
+                    if key not in activation_record:
+                        continue
+                    value = str(activation_record.get(key) or "")
+                    if value in {"", "unknown"}:
+                        return "FAILED", {**evidence, "reason": "artifact_hash_unavailable", "hash_field": key}
+                    if value != expected_hash:
+                        return "FAILED", {**evidence, "reason": "artifact_hash_changed", "hash_field": key}
+            target_name = cls._target_skill_name(target_skill_id, root)
+            inventory = cls._effective_skill_inventory(root, workspace, home, target_name)
+            same_name = tuple(item for item in inventory if item["name"] == target_name)
+            evidence = {
+                **evidence,
+                "effective_skill_inventory": list(inventory),
+                "target_skill_name": target_name,
+                "inventory_evidence_tier": "STATIC_CONFIG_VERIFIED",
+            }
+            if arm == "no_skill":
+                if same_name:
+                    return "FAILED", {**evidence, "reason": "no_skill_skill_leak"}
+            else:
+                if not same_name:
+                    return "UNVERIFIED", {**evidence, "reason": "target_skill_not_in_effective_discovery_scope"}
+                if len(same_name) != 1:
+                    return "FAILED", {**evidence, "reason": "skill_version_or_scope_collision"}
+                if same_name[0]["content_hash"] != expected_hash:
+                    return "FAILED", {**evidence, "reason": "deployed_skill_hash_mismatch"}
+
+            host_entries: Sequence[Mapping[str, Any]] = ()
+            if isinstance(host_skill_inventory, Mapping):
+                value = host_skill_inventory.get("entries", ())
+                if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                    host_entries = tuple(item for item in value if isinstance(item, Mapping))
+            elif isinstance(host_skill_inventory, Sequence) and not isinstance(host_skill_inventory, (str, bytes)):
+                host_entries = tuple(item for item in host_skill_inventory if isinstance(item, Mapping))
+            host_tier = str((host_skill_inventory or {}).get("evidence_tier", "") if isinstance(host_skill_inventory, Mapping) else "")
+            host_observed = host_tier == "HOST_OBSERVED" and bool(host_entries)
+            if host_observed:
+                host_same_name = tuple(item for item in host_entries if str(item.get("name", "")) == target_name)
+                if arm == "no_skill" and host_same_name:
+                    return "FAILED", {**evidence, "reason": "host_skill_leak", "host_discovery_observed": True}
+                if arm != "no_skill" and (
+                    len(host_same_name) != 1
+                    or str(host_same_name[0].get("content_hash", "")) != expected_hash
+                ):
+                    return "FAILED", {**evidence, "reason": "host_discovery_does_not_match_artifact", "host_discovery_observed": True}
+                if arm != "no_skill":
+                    static_entry = same_name[0]
+                    for key in ("scope", "version_id"):
+                        reported = str(host_same_name[0].get(key, ""))
+                        if reported and reported != str(static_entry.get(key, "")):
+                            return "FAILED", {**evidence, "reason": "host_discovery_scope_or_version_mismatch", "host_discovery_observed": True}
+                return "VERIFIED", {
+                    **evidence,
+                    "inventory_evidence_tier": "HOST_OBSERVED",
+                    "host_discovery_observed": True,
+                }
+            return "STATIC_CONFIG_VERIFIED", {**evidence, "reason": "host_skill_discovery_not_observable"}
         except (OSError, ValueError):
-            return "UNVERIFIED"
+            return "UNVERIFIED", {**evidence, "reason": "skill_inventory_unreadable"}
+
+    @classmethod
+    def _condition_verified(
+        cls,
+        arm: str,
+        root: Path,
+        expected_hash: str,
+        workspace: Path,
+        codex_home: str | Path | None,
+        **kwargs: Any,
+    ) -> str:
+        return cls._condition_check(arm, root, expected_hash, workspace, codex_home, **kwargs)[0]
 
     @staticmethod
     def _task_result(value: Mapping[str, Any]) -> str:
@@ -915,6 +1113,7 @@ class RealCodexThreeArmRunner:
         pair_id: str = "",
         workspaces: Mapping[str, str | Path] | None = None,
         codex_homes: Mapping[str, str | Path] | None = None,
+        host_skill_inventory: Mapping[str, Mapping[str, Any] | Sequence[Mapping[str, Any]]] | None = None,
         persist: "QualityService | None" = None,
     ) -> QualityReport:
         from .adapters.real_agent import CodexRealTaskRunner
@@ -922,14 +1121,20 @@ class RealCodexThreeArmRunner:
         frozen = self._validate(cases, artifacts)
         experiment_id = experiment_id or new_id("m74-real-skill")
         pair_id = pair_id or new_id("m74-pair")
+        resolved_homes = {
+            arm: self._isolated_home((codex_homes or {}).get(arm))
+            for arm in ("no_skill", "baseline", "candidate")
+        }
+        supplied_homes = [str(home) for home in resolved_homes.values() if home is not None]
+        shared_homes = len(supplied_homes) != len(set(supplied_homes))
         results: list[_ArmExecution] = []
         evidence: list[QualityEvidence] = []
         for case in cases:
             for arm in ("no_skill", "baseline", "candidate"):
                 root, artifact_hash = frozen[arm]
                 workspace = Path((workspaces or {}).get(arm, root)).expanduser().resolve()
-                home_value = (codex_homes or {}).get(arm)
-                home = Path(home_value).expanduser().resolve() if home_value else None
+                home = resolved_homes[arm]
+                arm_host_inventory = (host_skill_inventory or {}).get(arm)
                 runner = CodexRealTaskRunner(
                     self.db,
                     codex_command=self.codex_command,
@@ -941,29 +1146,49 @@ class RealCodexThreeArmRunner:
                     model_id=self.model_id,
                     sandbox=self.sandbox,
                 )
-                try:
-                    run_evidence = runner.run(
-                        case_id=case.case_id,
-                        task_input=case.runner_input(),
-                        baseline_or_candidate=arm,
-                        artifact_hash=artifact_hash,
-                        capability_version_id=case.target_skill_id,
-                        pair_id=pair_id,
-                        experiment_id=experiment_id,
-                        task_category=case.category,
-                        artifact_root=root,
-                        codex_home_override=home,
-                        oracle=None,
-                    )
-                    condition = self._condition_verified(arm, root, artifact_hash, workspace, home)
-                except Exception as exc:
-                    run_evidence = None
-                    condition = "UNKNOWN"
-                    error = type(exc).__name__
-                    runner_error_status = "blocked_env" if isinstance(exc, OSError) else "failed"
+                run_evidence = None
+                condition = "UNVERIFIED"
+                condition_evidence: dict[str, Any] = {"reason": "runner_not_started", "effective_skill_inventory": []}
+                runner_error_status = "blocked_env"
+                runner_error_type = "isolated_codex_home_required" if home is None else "shared_isolated_home" if shared_homes else "runner_not_started"
+                if home is not None and not shared_homes:
+                    try:
+                        run_evidence = runner.run(
+                            case_id=case.case_id,
+                            task_input=case.runner_input(),
+                            baseline_or_candidate=arm,
+                            artifact_hash=artifact_hash,
+                            capability_version_id=case.target_skill_id,
+                            pair_id=pair_id,
+                            experiment_id=experiment_id,
+                            task_category=case.category,
+                            artifact_root=root,
+                            codex_home_override=home,
+                            oracle=None,
+                        )
+                        condition, condition_evidence = self._condition_check(
+                            arm,
+                            root,
+                            artifact_hash,
+                            workspace,
+                            home,
+                            target_skill_id=case.target_skill_id,
+                            host_skill_inventory=arm_host_inventory,
+                            activation_record=run_evidence.activation_record,
+                        )
+                    except Exception as exc:
+                        condition = "UNKNOWN"
+                        condition_evidence = {"reason": "runner_error", "effective_skill_inventory": []}
+                        runner_error_type = type(exc).__name__
+                        runner_error_status = "blocked_env" if isinstance(exc, OSError) else "failed"
+                elif shared_homes:
+                    runner_error_type = "shared_isolated_home"
+                    condition_evidence = {"reason": runner_error_type, "effective_skill_inventory": []}
                 oracle_result: dict[str, Any] = {"verdict": "unknown", "reason": "execution_not_completed"}
                 task_result = "unknown"
-                if run_evidence is not None and run_evidence.execution_status == "completed" and condition == "VERIFIED" and oracle is not None:
+                if run_evidence is not None and run_evidence.execution_status == "completed" and condition != "VERIFIED":
+                    oracle_result = {"verdict": "unknown", "reason": "condition_unverified", "condition_status": condition}
+                elif run_evidence is not None and run_evidence.execution_status == "completed" and oracle is not None:
                     try:
                         value = oracle(case, workspace, run_evidence.to_dict())
                         oracle_result = dict(value) if isinstance(value, Mapping) else {"passed": bool(value)}
@@ -975,12 +1200,13 @@ class RealCodexThreeArmRunner:
                 elif run_evidence is not None and oracle is None:
                     oracle_result = {"verdict": "unknown", "reason": "independent_oracle_not_configured"}
                 else:
-                    oracle_result = {"verdict": "unknown", "reason": "runner_error", "error_type": error}
+                    oracle_result = {"verdict": "unknown", "reason": "runner_error", "error_type": runner_error_type}
                 if run_evidence is None:
                     item = _ArmExecution(
                         arm, case.case_id, runner_error_status, "unknown", oracle_result, artifact_hash, case.task_input_hash,
                         None, "", ("runner_error",), "REAL_AGENT_OBSERVED", environment_fingerprint=self.environment_fingerprint,
-                        skill_condition_verified=condition,
+                        skill_condition_verified=condition, condition_reason=str(condition_evidence.get("reason") or runner_error_type),
+                        effective_skill_inventory=tuple(condition_evidence.get("effective_skill_inventory", ())),
                     )
                 else:
                     activation = run_evidence.activation_record or {}
@@ -1005,11 +1231,13 @@ class RealCodexThreeArmRunner:
                         execution_manifest_hash=run_evidence.execution_manifest_hash,
                         trace_id=run_evidence.trace_ids[0] if run_evidence.trace_ids else "",
                         event_refs=run_evidence.event_refs,
-                        artifact_prelaunch_hash=str(activation.get("actual_prelaunch_hash") or artifact_hash),
+                        artifact_prelaunch_hash=str(activation.get("actual_prelaunch_hash") or "unknown"),
                         artifact_runtime_hash=str(activation.get("actual_runtime_hash_or_unknown") or "unknown"),
                         artifact_postrun_hash=str(activation.get("actual_postrun_hash_or_unknown") or "unknown"),
                         skill_condition_verified=condition,
                         skill_invocation_observed="NOT_OBSERVABLE",
+                        condition_reason=str(condition_evidence.get("reason") or ""),
+                        effective_skill_inventory=tuple(condition_evidence.get("effective_skill_inventory", ())),
                         evidence=run_evidence.to_dict(),
                     )
                     if task_result != "unknown":
@@ -1030,7 +1258,8 @@ class RealCodexThreeArmRunner:
                         observation_completeness="complete" if item.execution_status == "completed" else "partial",
                         oracle_id="external-oracle" if oracle else None,
                         oracle_version="1" if oracle else None,
-                        verdict="IMPROVED" if task_result == "success" else "INCONCLUSIVE",
+                        # A per-arm record cannot carry a cross-arm improvement verdict.
+                        verdict="INCONCLUSIVE",
                         metrics={
                             "arm": arm,
                             "execution_verdict": item.execution_verdict,
@@ -1041,6 +1270,9 @@ class RealCodexThreeArmRunner:
                             "artifact_prelaunch_hash": item.artifact_prelaunch_hash,
                             "artifact_runtime_hash": item.artifact_runtime_hash,
                             "artifact_postrun_hash": item.artifact_postrun_hash,
+                            "condition_reason": item.condition_reason,
+                            "effective_skill_inventory": list(item.effective_skill_inventory),
+                            "comparison_verdict": "N/A",
                         },
                         environment_fingerprint=item.environment_fingerprint,
                         artifact_hash=artifact_hash,
@@ -1055,6 +1287,17 @@ class RealCodexThreeArmRunner:
             case_id for case_id in baseline
             if baseline[case_id].task_result == "success" and candidate[case_id].task_result != "success"
         )
+        holdout_ids = {case.case_id for case in cases if case.holdout or case.category == "holdout"}
+        holdout_regressions = sorted(case_id for case_id in regressions if case_id in holdout_ids)
+        unknown_samples = [
+            {
+                "case_id": item.case_id,
+                "arm": item.arm,
+                "reason": item.oracle_result.get("reason", "unknown") or "unknown",
+            }
+            for item in results
+            if item.task_result == "unknown" or item.execution_status != "completed"
+        ]
         if unknown:
             benefit = "BLOCKED_ENV" if any(item.execution_status == "blocked_env" for item in results) else "INCONCLUSIVE"
         elif regressions:
@@ -1063,7 +1306,8 @@ class RealCodexThreeArmRunner:
             baseline_success = sum(item.task_result == "success" for item in baseline.values())
             candidate_success = sum(item.task_result == "success" for item in candidate.values())
             benefit = "IMPROVED" if candidate_success > baseline_success else "EQUIVALENT"
-        attempted = len(cases) * 3
+        planned = len(cases) * 3
+        attempted = sum(bool(item.trace_id) for item in results)
         completed = sum(item.execution_status == "completed" for item in results)
         oracle_verified = sum(item.task_result in {"success", "failed"} for item in results)
         condition_verified = all(item.skill_condition_verified == "VERIFIED" for item in results)
@@ -1081,22 +1325,34 @@ class RealCodexThreeArmRunner:
                 "runner_version": self.runner_version,
                 "pilot_status": pilot,
                 "verdict": benefit,
-                "production_benefit_verdict": benefit if pilot == "PASS" else "INCONCLUSIVE",
+                "pilot_suite_condition_effect": f"PILOT_SUITE_{benefit}" if pilot == "PASS" and benefit == "IMPROVED" else benefit,
+                "production_benefit_verdict": "UNVERIFIED",
+                "real_three_arm_cases_planned": planned,
                 "real_three_arm_cases_attempted": attempted,
                 "real_three_arm_cases_completed": completed,
                 "real_three_arm_oracle_verified": oracle_verified,
+                "suite_id": experiment_id,
+                "case_ids": [case.case_id for case in cases],
+                "sample_size": len(cases),
                 "unknown_case_ids": sorted(set(unknown)),
+                "unknown_samples": unknown_samples,
                 "regressions": regressions,
-                "skill_condition_verified": "PASS" if condition_verified else "PARTIAL",
+                "holdout_regressions": holdout_regressions,
+                "skill_condition_verified": "PASS" if condition_verified else "PARTIAL" if all(item.skill_condition_verified in {"VERIFIED", "STATIC_CONFIG_VERIFIED"} for item in results) else "UNVERIFIED",
+                "skill_condition_status_counts": {
+                    state: sum(item.skill_condition_verified == state for item in results)
+                    for state in ("VERIFIED", "STATIC_CONFIG_VERIFIED", "FAILED", "UNVERIFIED", "UNKNOWN")
+                },
                 "skill_invocation_observed": "NOT_OBSERVABLE",
                 "oracle_independence": "PASS" if oracle is not None else "NOT_CONFIGURED",
                 "artifact_freeze": "PASS" if all(item.artifact_postrun_hash == item.artifact_hash for item in results) else "FAIL",
                 "execution_verdict": {state: sum(item.execution_verdict == state for item in results) for state in ("success", "failed", "unknown", "completed")},
             },
             metrics=(
-                QualityMetric("real_cases_attempted", attempted, "real_codex_runner", attempted),
-                QualityMetric("real_cases_completed", completed, "real_codex_runner", attempted, "provider_or_host_blocked" if completed != attempted else ""),
-                QualityMetric("oracle_verified", oracle_verified, "independent_oracle", attempted, "oracle_or_execution_unknown" if oracle_verified != attempted else ""),
+                QualityMetric("real_cases_planned", planned, "real_codex_runner", planned),
+                QualityMetric("real_cases_attempted", attempted, "real_codex_runner", planned),
+                QualityMetric("real_cases_completed", completed, "real_codex_runner", planned, "provider_or_host_blocked" if completed != planned else ""),
+                QualityMetric("oracle_verified", oracle_verified, "independent_oracle", planned, "oracle_or_execution_unknown" if oracle_verified != planned else ""),
                 QualityMetric("task_success_rate.baseline", _rate(results, "baseline"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
                 QualityMetric("task_success_rate.candidate", _rate(results, "candidate"), "independent_oracle", len(cases), "unknown_execution" if unknown else ""),
                 QualityMetric("tool_call_count", "N/A", "codex_host_not_comparable", 0, "host_usage_not_exposed"),

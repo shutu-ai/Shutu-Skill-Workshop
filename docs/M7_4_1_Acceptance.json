@@ -1,0 +1,90 @@
+{
+  "BASELINE_HEAD": "09049c31b219747942d3e7430c5c24d37a9df227",
+  "SOURCE_HEAD": "09049c31b219747942d3e7430c5c24d37a9df227",
+  "FINAL_HEAD": null,
+  "REMOTE_HEAD": null,
+  "M7_4_1_PREFLIGHT_STATUS": "PASS",
+  "M7_4_1_ENGINEERING_STATUS": "PASS",
+  "M7_4_1_OVERALL_STATUS": "PARTIAL",
+  "M7_4_1_REAL_PILOT_STATUS": "BLOCKED_ENV",
+  "M7_4_1_SKILL_CONDITION_EFFECT": "BLOCKED_ENV",
+  "SKILL_CONDITION_VERIFIED": "UNVERIFIED",
+  "SKILL_INVOCATION_OBSERVED": "NOT_OBSERVABLE",
+  "PROVIDER_AUTH_STATUS": "NOT_AUTHENTICATED",
+  "PROVIDER_REAL_READY": "BLOCKED_ENV",
+  "REAL_CODEX_PILOT": "BLOCKED_ENV",
+  "REAL_THREE_ARM_ATTEMPTED": 0,
+  "REAL_THREE_ARM_COMPLETED": 0,
+  "REAL_THREE_ARM_ORACLE_VERIFIED": 0,
+  "PILOT_SUITE_CONDITION_EFFECT": "BLOCKED_ENV",
+  "PRODUCTION_BENEFIT": "UNVERIFIED",
+  "OBSERVER_PAIRED_OVERHEAD": "PARTIAL_SAMPLE",
+  "NATIVE_SKILL_LIFECYCLE": "NOT_OBSERVABLE",
+  "NO_DEFAULT_CODEX_HOME_MUTATION": "PASS",
+  "ADDITIONAL_PROVIDER_AUTH_REQUIRED": "ISOLATED_HOME_ONLY",
+  "TESTS": "112/112; skipped=0",
+  "SKIPPED": 0,
+  "GIT_PUSH": "PENDING",
+  "evidence": {
+    "host": {
+      "codex_cli_version": "codex-cli 0.163.0",
+      "exec_help_supported": true,
+      "skill_search_feature": "stable_enabled",
+      "native_skill_lifecycle": "NOT_OBSERVABLE",
+      "host_skill_discovery": "NOT_OBSERVABLE"
+    },
+    "preflight": {
+      "home_scope": "isolated",
+      "auth_status": "NOT_AUTHENTICATED",
+      "provider_status": "BLOCKED_ENV",
+      "error_class": "AUTHENTICATION",
+      "failure_layer": "provider",
+      "blocked_reason": "provider_authentication",
+      "proxy_env_names_present": ["NO_PROXY"],
+      "credentials_persisted": false,
+      "raw_output_persisted": false,
+      "evidence_digest": "b7f0fe55c9074a0dfb92c298836f9d9c1971b5c5dc18696bed196a80b43486dd",
+      "arm_smokes": [
+        {"arm": "no-skill", "home_scope": "isolated", "auth_status": "NOT_AUTHENTICATED", "provider_status": "BLOCKED_ENV", "error_class": "timeout", "blocked_reason": "provider_timeout", "credentials_persisted": false, "evidence_digest": "d9b1e99f6cd57084f4dca79994127ed9a832f5b62ce2c5643ad1ddc3e1c22691"},
+        {"arm": "baseline", "home_scope": "isolated", "auth_status": "NOT_AUTHENTICATED", "provider_status": "BLOCKED_ENV", "error_class": "timeout", "blocked_reason": "provider_timeout", "credentials_persisted": false, "evidence_digest": "a5cf84fcc7f643192a420f4471cc8a620691d2ddb794a58b9a0c8fb244b39da8"},
+        {"arm": "candidate", "home_scope": "isolated", "auth_status": "NOT_AUTHENTICATED", "provider_status": "BLOCKED_ENV", "error_class": "timeout", "blocked_reason": "provider_timeout", "credentials_persisted": false, "evidence_digest": "e20e27c93dd4822caf5f2dfc91f22b50623480fe1944bd4a5d5fae498a28ea35"}
+      ]
+    },
+    "condition_gate": {
+      "inventory_detection": "filesystem_scan",
+      "inventory_evidence_tier": "STATIC_CONFIG_VERIFIED",
+      "host_observed_required_for_verified": true,
+      "no_skill_home_plugin_leak_test": "PASS",
+      "candidate_missing_discovery_path_test": "PASS",
+      "same_name_collision_gate": "IMPLEMENTED"
+    },
+    "runner_gate": {
+      "completed_condition_unverified": "PASS",
+      "single_arm_improved_verdict": "PASS",
+      "holdout_regression_gate": "PASS",
+      "artifact_pre_runtime_post_hash_gate": "PASS"
+    },
+    "observer_pair": {
+      "sample_count": 1,
+      "conclusion": "PARTIAL_SAMPLE",
+      "same_request_digest": "2a56a0b08c3b54f96dbcbd419fe65c0cccdd4a656ae88fc750c15775d6f561bf",
+      "direct": {"exit_code": 0, "response_count": 3, "e2e_ms": 280.267},
+      "observer": {"exit_code": 0, "response_count": 3, "e2e_ms": 455.981, "observer_overhead_ms": 431.3783000106923, "session_close_status": "COMPLETE", "pending_request_count": 0, "failed_observations": 0, "trace_id": "mcp-trace_51c3c3db82034e3882c093f77807eb06"},
+      "p50_p95": "N/A_SAMPLE_TOO_SMALL"
+    },
+    "tests": {
+      "targeted_module": "tests.test_m74_real_skill_evaluation",
+      "targeted_passed": 10,
+      "targeted_run": 10,
+      "full_passed": 112,
+      "full_run": 112,
+      "skipped": 0,
+      "compileall": "PASS"
+    },
+    "git": {
+      "final_and_remote_in_json": null,
+      "untracked_preserved": 14,
+      "proxy_persisted": false
+    }
+  }
+}
