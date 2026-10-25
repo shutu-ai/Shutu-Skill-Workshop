@@ -143,7 +143,7 @@ class HookSpoolImporter:
         selected_keys: list[str] = []
         trace_ids: set[str] = set()
         next_sequences: dict[str, int] = {}
-        trace_sessions: dict[str, str] = {}
+        trace_sessions: dict[str, tuple[str, str]] = {}
         for line in self.spool_path.read_text(encoding="utf-8").splitlines():
             if len(events) >= max_events:
                 break
@@ -164,7 +164,10 @@ class HookSpoolImporter:
                 next_sequences[trace_id] = self.ingestor.traces.next_event_seq(trace_id)
             event, trace = self._event(value, key, seq=next_sequences[trace_id])
             next_sequences[trace_id] += 1
-            trace_sessions[trace_id] = session_id
+            trace_sessions[trace_id] = (
+                session_id,
+                _text(value.get("source_evidence_tier")) or "UNVERIFIED",
+            )
             events.append(event)
             trace_ids.add(trace.trace_id)
             selected_keys.append(key)
@@ -176,7 +179,8 @@ class HookSpoolImporter:
                 continue
             existing = self.ingestor.traces.get(trace_id)
             if existing is None:
-                traces[trace_id] = self._trace(trace_id, trace_sessions.get(trace_id, ""))
+                session_id, evidence_tier = trace_sessions.get(trace_id, ("", "UNVERIFIED"))
+                traces[trace_id] = self._trace(trace_id, session_id, evidence_tier=evidence_tier)
         return (
             [{"record_type": "trace", "trace": trace.to_dict()} for trace in traces.values()] + events,
             selected_keys,
@@ -184,7 +188,7 @@ class HookSpoolImporter:
             len(traces),
         )
 
-    def _trace(self, trace_id: str, session_id: str) -> Trace:
+    def _trace(self, trace_id: str, session_id: str, *, evidence_tier: str = "UNVERIFIED") -> Trace:
         return Trace(
             trace_id=trace_id,
             workspace_id=str(self.workspace),
@@ -196,7 +200,7 @@ class HookSpoolImporter:
             observation_completeness="partial",
             metadata={
                 "observation_source": "CODEX_HOOK",
-                "source_evidence_tier": "REAL_OBSERVED",
+                "source_evidence_tier": evidence_tier,
                 "hook_summary_only": True,
             },
         )
@@ -207,8 +211,13 @@ class HookSpoolImporter:
         hook_name = _text(value.get("hook_event_name")) or "unknown"
         tool_name = _text(value.get("tool_name"))
         result_status = _text(value.get("result_status"))
+        is_post_tool_use = hook_name.casefold() == "posttooluse"
         is_mcp = tool_name.casefold().startswith(("mcp__", "mcp.", "workshop_"))
         is_error = result_status == "error"
+        evidence_tier = _text(value.get("source_evidence_tier")) or "UNVERIFIED"
+        identity_quality = _text(value.get("event_id_quality")) or "generated/unknown"
+        request_id = _text(value.get("request_id_hash"))
+        session_scope = _text(value.get("session_id_hash"))
         event_type = "mcp.tool_result" if is_mcp else "tool.result"
         if hook_name.casefold() != "posttooluse":
             event_type = "task.started" if hook_name.casefold() == "sessionstart" else "host.hook." + hook_name.casefold()
@@ -232,13 +241,13 @@ class HookSpoolImporter:
             tool_name=tool_name,
             transport="codex-cli-hook",
             observation_source="CODEX_HOOK",
-            status=result_status or ("ok" if hook_name.casefold() == "posttooluse" else "observed"),
+            status=result_status or ("unknown" if is_post_tool_use else "observed"),
             error_type="mcp.error" if is_mcp and is_error else ("hook.tool_error" if is_error else ""),
-            correlation_quality="exact" if key else "unknown",
+            correlation_quality="exact" if request_id and session_scope else "unknown",
             payload_json={
                 "hook_event_name": hook_name,
                 "argument_keys": value.get("argument_keys", []),
-                "result_status": result_status,
+                "result_status": result_status or ("unknown" if is_post_tool_use else "observed"),
                 "isError": bool(is_mcp and is_error),
                 "permission_mode": _text(value.get("permission_mode")),
                 "redaction": "summary_only",
@@ -246,7 +255,11 @@ class HookSpoolImporter:
             source_metadata={
                 "host_event_id": key,
                 "observation_source": "CODEX_HOOK",
-                "source_evidence_tier": "REAL_OBSERVED",
+                "source_evidence_tier": evidence_tier,
+                "source_identity_quality": identity_quality,
+                "missing_correlation_fields": [
+                    field for field, present in (("session_id_hash", bool(session_scope)), ("request_id_hash", bool(request_id))) if not present
+                ],
                 "session_id_hash": session_id,
                 "turn_id_hash": _text(value.get("turn_id_hash")),
                 "cwd_hash": _text(value.get("cwd_hash")),

@@ -132,6 +132,7 @@ class ObserverReport:
     duplicate_requests: int = 0
     process_exit_code: int | None = None
     timed_out: bool = False
+    termination_reason: str = ""
     observer_overhead_ms: float = 0.0
     errors: list[str] = field(default_factory=list)
     stderr_summary: str = ""
@@ -172,8 +173,12 @@ class McpTraceRecorder:
         self._seq = 0
         self._started = False
         self._closed = False
-        self._pending: dict[tuple[str, str], tuple[str, str, float]] = {}
+        # The JSON-RPC id is only unique within a connection and direction.
+        # Keeping the initiator in the key also handles a server request that
+        # reuses an id while a client request is still outstanding.
+        self._pending: dict[tuple[str, str, str], tuple[str, str, float]] = {}
         self._tool_versions: dict[str, str] = {}
+        self._diagnosis = None
 
     def start(self) -> None:
         if self._started or not self.ingestor:
@@ -232,21 +237,30 @@ class McpTraceRecorder:
             params = message.get("params") if isinstance(message.get("params"), dict) else {}
             meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
             agent_session_id = agent_session_id or str(meta.get("ai.opencode/sessionID", ""))
-            pending_key = (connection_id, request_key)
-            if direction == "client_to_server" and "method" in message:
-                self.report.request_count += 1
-                if request_key:
-                    with self._pending_lock:
-                        if pending_key in self._pending:
-                            self.report.duplicate_requests += 1
-                        self._pending[pending_key] = (
-                            method,
-                            str(summary.get("tool_name", "")),
-                            time.perf_counter(),
-                        )
+            has_method = "method" in message
+            if has_method and not is_response:
+                pending_origin = direction
+            else:
+                pending_origin = "server_to_client" if direction == "client_to_server" else "client_to_server"
+            pending_key = (connection_id, request_key, pending_origin)
+            if has_method and not is_response:
+                is_cancel = method in {"$/cancelRequest", "$ /cancelRequest"}
+                if request_key or is_cancel:
+                    self.report.request_count += 1
+                    if request_key:
+                        with self._pending_lock:
+                            if pending_key in self._pending:
+                                self.report.duplicate_requests += 1
+                            self._pending[pending_key] = (
+                                method,
+                                str(summary.get("tool_name", "")),
+                                time.perf_counter(),
+                            )
+                else:
+                    self.report.notification_count += 1
             elif direction == "server_to_client" and is_response:
                 self.report.response_count += 1
-            elif "method" in message and "id" not in message:
+            elif has_method and "id" not in message:
                 self.report.notification_count += 1
             detected_era = detect_era(message, headers)
             if detected_era != "unknown":
@@ -278,6 +292,7 @@ class McpTraceRecorder:
             if correlation_evidence:
                 metadata["correlation_evidence"] = dict(correlation_evidence)
             event_seq = self._next_seq()
+            event_key = request_id or f"event-{event_seq}"
             event = TraceEvent(
                 trace_id=self.trace_id,
                 seq=event_seq,
@@ -288,7 +303,7 @@ class McpTraceRecorder:
                 duration_ms=self._response_duration(pending_key),
                 capability_id=self._tool_capability(tool_name),
                 capability_version_id=self._tool_versions.get(tool_name, ""),
-                adapter_event_id=f"{connection_id}:{direction}:{request_id or event_seq}",
+                adapter_event_id=f"{connection_id}:{pending_key[2]}:{direction}:{event_key}",
                 request_id=request_id,
                 tool_name=tool_name,
                 transport=self.transport,
@@ -300,8 +315,10 @@ class McpTraceRecorder:
                 source_metadata=metadata,
             )
             self._write(event)
+            if event.status == "error" and self.ingestor:
+                self._analyze_error()
             self.report.observed_messages += 1
-            if direction == "server_to_client" and request_id:
+            if is_response and request_id:
                 with self._pending_lock:
                     self._pending.pop(pending_key, None)
             if direction == "server_to_client":
@@ -375,7 +392,7 @@ class McpTraceRecorder:
         self,
         direction: str,
         message: Mapping[str, Any],
-        pending_key: tuple[str, str],
+        pending_key: tuple[str, str, str],
     ) -> tuple[str, str, str, str, str]:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         result = message.get("result") if isinstance(message.get("result"), dict) else {}
@@ -403,11 +420,17 @@ class McpTraceRecorder:
             event_type = "mcp.error"
         else:
             event_type = "mcp.response"
-        status = "error" if error or bool(result.get("isError", False)) else ("started" if method else "ok")
-        error_type = "mcp.error" if error or bool(result.get("isError", False)) else ""
+        is_business_error = bool(result.get("isError", False))
+        is_protocol_error = bool(error)
+        status = "error" if is_business_error or is_protocol_error else ("started" if method else "ok")
+        if effective_method in {"$/cancelRequest", "$ /cancelRequest"}:
+            status = "cancelled"
+        # Keep the existing R01 detector contract for business errors while
+        # exposing JSON-RPC protocol errors as a distinct transport class.
+        error_type = "mcp.error" if is_business_error else ("mcp.protocol_error" if is_protocol_error else "")
         return event_type, tool_name, status, error_type, key
 
-    def _response_duration(self, pending_key: tuple[str, str]) -> int | None:
+    def _response_duration(self, pending_key: tuple[str, str, str]) -> int | None:
         if not pending_key[1]:
             return None
         with self._pending_lock:
@@ -431,6 +454,18 @@ class McpTraceRecorder:
         if not self.ingestor:
             return
         self.ingestor.append(event)
+
+    def _analyze_error(self) -> None:
+        """Run the existing deterministic detector after a persisted error."""
+
+        try:
+            if self._diagnosis is None:
+                from ...diagnostics import DiagnosisService
+
+                self._diagnosis = DiagnosisService(self.ingestor.db)
+            self._diagnosis.analyze_new(limit=100)
+        except Exception as exc:  # observation must not replay or block MCP
+            self._record_failure(exc)
 
     def _record_failure(self, exc: BaseException) -> None:
         self.report.failed_observations += 1

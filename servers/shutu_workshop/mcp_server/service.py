@@ -156,6 +156,15 @@ class WorkshopMcpService:
 
     def list_issues(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         hook_import = self._flush_hooks()
+        # A live observer may persist an error immediately before this read;
+        # reconcile the current trace before returning the issue ledger.
+        try:
+            for trace in self.traces.list_traces()[-100:]:
+                events = self.traces.list_events(trace.trace_id)
+                if any(event.status == "error" for event in events):
+                    self.diagnosis.analyze_trace(trace.trace_id)
+        except (OSError, sqlite3.Error, ValueError, TypeError):
+            pass
         arguments = arguments or {}
         issues = self.diagnosis.list_issues(
             status=str(arguments.get("status") or "") or None,

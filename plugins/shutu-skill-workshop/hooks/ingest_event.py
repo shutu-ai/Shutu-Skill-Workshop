@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,34 @@ def _retention() -> int:
         return max(1, min(int(os.environ.get("SHUTU_WORKSHOP_HOOK_RETENTION", DEFAULT_RETENTION)), MAX_RETENTION))
     except (TypeError, ValueError):
         return DEFAULT_RETENTION
+
+
+def _event_identity(event: dict[str, Any], event_name: str, request_id: Any) -> tuple[str, str]:
+    """Return a stable redacted id when possible, otherwise a local id.
+
+    A generated id is deliberately not evidence of host correlation.  It only
+    prevents two otherwise unidentifiable hook events from being collapsed.
+    """
+
+    event_id = event.get("event_id") or event.get("id")
+    if event_id or request_id:
+        return _hash({"event": event_name, "event_id": event_id, "request_id": request_id}), "provided"
+    return f"local-{uuid.uuid4().hex}", "generated/unknown"
+
+
+def _result_status(event: dict[str, Any]) -> str:
+    explicit = str(event.get("result_status") or "").strip().casefold()
+    if explicit in {"ok", "success", "succeeded", "pass", "passed"}:
+        return "ok"
+    if explicit in {"error", "failed", "failure", "fail"}:
+        return "error"
+    response_value = event.get("tool_response")
+    if isinstance(response_value, dict):
+        if response_value.get("isError") or response_value.get("error"):
+            return "error"
+        if response_value.get("success") is True or str(response_value.get("status", "")).casefold() in {"ok", "success", "succeeded"}:
+            return "ok"
+    return "unknown"
 
 
 @contextmanager
@@ -74,15 +103,12 @@ def _summary(event: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     event_name = str(event.get("hook_event_name") or event.get("event_type") or "unknown")
     tool_name = str(event.get("tool_name") or "")
     request_id = event.get("request_id") or event.get("tool_use_id") or ""
-    event_id = event.get("event_id") or event.get("id") or ""
-    unknown = not bool(event_id or request_id or event_name != "unknown")
+    identity, identity_quality = _event_identity(event, event_name, request_id)
     input_value = event.get("tool_input")
-    response_value = event.get("tool_response")
-    response_status = ""
-    if isinstance(response_value, dict):
-        response_status = "error" if response_value.get("isError") or response_value.get("error") else "ok"
+    response_status = _result_status(event) if event_name.casefold() == "posttooluse" else "observed"
     summary = {
-        "event_id": _hash(event_id or {"event": event_name, "request": request_id, "time": event.get("timestamp", "")}),
+        "event_id": identity,
+        "event_id_quality": identity_quality,
         "hook_event_name": event_name,
         "tool_name": tool_name,
         "session_id_hash": _hash(event.get("session_id", "")) if event.get("session_id") else "",
@@ -92,10 +118,11 @@ def _summary(event: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         "permission_mode": str(event.get("permission_mode") or ""),
         "argument_keys": sorted(str(key) for key in input_value) if isinstance(input_value, dict) else [],
         "result_status": response_status,
+        "source_evidence_tier": "REAL_OBSERVED",
         "captured_at": _now(),
         "redaction": "summary_only",
     }
-    return summary, unknown
+    return summary, identity_quality == "generated/unknown"
 
 
 def _write_summary(plugin_data: Path, summary: dict[str, Any], unknown: bool) -> None:

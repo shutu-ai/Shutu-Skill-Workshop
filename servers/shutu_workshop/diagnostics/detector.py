@@ -149,7 +149,7 @@ def _transport_class(event: TraceEvent) -> tuple[str, str, str]:
         return "observer_failure_observed", "observer", f"observer:{status or error_type or 'failure'}"
     if layer in {"upstream", "network", "proxy"}:
         return "network_failure_observed", "network", f"upstream:{status or error_type or 'failure'}"
-    if any(value in error_type for value in ("timeout", "timed_out", "connection", "network", "dns", "transport")):
+    if any(value in error_type for value in ("timeout", "timed_out", "connection", "network", "dns", "transport", "protocol")):
         return "network_failure_observed", "network", error_type[:96]
     if status is not None and status >= 500:
         return "upstream_boundary_failure_observed", "unknown", f"boundary:http:{status}"

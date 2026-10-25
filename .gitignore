@@ -8,6 +8,7 @@
 .test-m61/
 .test-m7/
 .test-m71*/
+.test-m72*/
 pytest-cache-files-*/
 __pycache__/
 *.py[cod]
