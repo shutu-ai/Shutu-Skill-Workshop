@@ -60,6 +60,8 @@ TOOLS = [
     {"name": "workshop_capability_versions", "description": "Read capability snapshots and version lineage.", "inputSchema": {"type": "object", "properties": {"capability_id": {"type": "string"}}}},
     {"name": "workshop_evaluation_report", "description": "Read an evaluation report and preserve unknown results.", "inputSchema": {"type": "object", "properties": {"run_id": {"type": "string"}}}},
     {"name": "workshop_release_status", "description": "Read release and observation summaries.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "workshop_quality_summary", "description": "Read bounded Skill/MCP quality summaries.", "inputSchema": {"type": "object", "properties": {"capability_id": {"type": "string"}, "report_kind": {"type": "string"}}}},
+    {"name": "workshop_quality_detail", "description": "Read one quality report and its evidence.", "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}, "capability_id": {"type": "string"}}}},
 ]
 
 
@@ -90,13 +92,13 @@ class PortableService:
         with self._connect() as connection:
             schema = int(connection.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0])
             counts = {}
-            for table in ("traces", "trace_events", "capabilities", "capability_versions", "issue_clusters", "real_agent_runs", "evaluation_runs", "release_links"):
+            for table in ("traces", "trace_events", "capabilities", "capability_versions", "issue_clusters", "real_agent_runs", "evaluation_runs", "release_links", "quality_runs"):
                 counts[table] = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             latest = str(connection.execute("SELECT COALESCE(MAX(occurred_at), '') FROM trace_events").fetchone()[0])
         hook = {"status": "NOT_ACTIVE"}
         if self.plugin_data:
             hook = _decode((self.plugin_data / "hook_state.json").read_text(encoding="utf-8"), {"status": "HOOKS_UNTRUSTED"}) if (self.plugin_data / "hook_state.json").is_file() else {"status": "HOOKS_UNTRUSTED"}
-        return {"status": "PASS", "data_status": "OBSERVED" if counts["traces"] or counts["trace_events"] else "NO_DATA", "evidence_tier": "REAL_OBSERVED", "source": "portable.sqlite", "database": {"path_present": True, "schema_version": schema, "latest_schema_version": 10, "counts": counts, "latest_event_at": latest}, "plugin": {"hook_state": hook}}
+        return {"status": "PASS", "data_status": "OBSERVED" if counts["traces"] or counts["trace_events"] else "NO_DATA", "evidence_tier": "REAL_OBSERVED", "source": "portable.sqlite", "database": {"path_present": True, "schema_version": schema, "latest_schema_version": 11, "counts": counts, "latest_event_at": latest}, "plugin": {"hook_state": hook}}
 
     def recent_activity(self, args: dict[str, Any]) -> dict[str, Any]:
         rows = self._rows("SELECT trace_id, event_id, occurred_at, type, actor, status, error_type, capability_id, capability_version_id, request_id, tool_name, transport, observation_source, correlation_quality FROM trace_events ORDER BY occurred_at DESC, event_id DESC LIMIT ?", (_limit(args.get("limit")),))
@@ -160,8 +162,46 @@ class PortableService:
     def release_status(self, _args: dict[str, Any]) -> dict[str, Any]:
         return {"status": "PASS", "data_status": "OBSERVED" if self.db_path.is_file() else "NO_DATA", "evidence_tier": "REAL_OBSERVED", "source": "portable.sqlite", "release_links": self._rows("SELECT release_id, status, target_scope, target_skill_name, candidate_artifact_hash, baseline_artifact_hash, capability_version_id, m0_operation_id, m0_version_id, rollback_version_id, created_at, updated_at FROM release_links ORDER BY updated_at DESC, release_id DESC LIMIT 20"), "observation_runs": self._rows("SELECT observation_id, release_id, conclusion, status, created_at, updated_at FROM release_observation_runs ORDER BY updated_at DESC, observation_id DESC LIMIT 20"), "plans": self._rows("SELECT plan_id, proposal_id, evaluation_run_id, target_scope, target_skill_name, state, created_at, updated_at FROM release_plans ORDER BY updated_at DESC, plan_id DESC LIMIT 20")}
 
+    def quality_summary(self, args: dict[str, Any]) -> dict[str, Any]:
+        conditions: list[str] = []
+        values: list[Any] = []
+        if args.get("report_kind"):
+            conditions.append("report_kind = ?")
+            values.append(str(args["report_kind"]))
+        rows = self._rows(
+            "SELECT run_id, report_kind, status, environment_fingerprint, report_json, created_at FROM quality_runs"
+            + (" WHERE " + " AND ".join(conditions) if conditions else "")
+            + " ORDER BY created_at DESC, run_id DESC LIMIT 100",
+            tuple(values),
+        )
+        if args.get("capability_id"):
+            rows = [item for item in rows if str(args["capability_id"]) in str(item.get("report_json", ""))]
+        if not rows:
+            return {"status": "NO_DATA", "data_status": "NO_DATA", "source": "portable.sqlite", "summary": None, "reports": []}
+        reports = []
+        for row in rows:
+            payload = _decode(row.pop("report_json"), {})
+            reports.append({"report_id": row["run_id"], "report_kind": row["report_kind"], "status": row["status"], "generated_at": row["created_at"], "summary": payload.get("summary", {})})
+        return {"status": "PASS", "data_status": "OBSERVED", "source": "portable.sqlite", "summary": {"report_count": len(reports)}, "reports": reports, "recommendations": []}
+
+    def quality_detail(self, args: dict[str, Any]) -> dict[str, Any]:
+        report_id = str(args.get("report_id") or "")
+        query = "SELECT report_json FROM quality_runs"
+        values: tuple[Any, ...] = ()
+        if report_id:
+            query += " WHERE run_id = ?"
+            values = (report_id,)
+        query += " ORDER BY created_at DESC, run_id DESC LIMIT 1"
+        rows = self._rows(query, values)
+        if not rows:
+            return {"status": "NO_DATA", "data_status": "NO_DATA", "source": "portable.sqlite", "report": None}
+        report = _decode(rows[0]["report_json"], {})
+        if args.get("capability_id") and str(args["capability_id"]) not in json.dumps(report, ensure_ascii=False):
+            return {"status": "NO_DATA", "data_status": "NO_DATA", "source": "portable.sqlite", "report": None}
+        return {"status": "PASS", "data_status": "OBSERVED", "source": "portable.sqlite", "report": report}
+
     def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        handlers = {"workshop_health": self.health, "workshop_recent_activity": self.recent_activity, "workshop_list_issues": self.list_issues, "workshop_issue_detail": self.issue_detail, "workshop_capability_versions": self.capability_versions, "workshop_evaluation_report": self.evaluation_report, "workshop_release_status": self.release_status}
+        handlers = {"workshop_health": self.health, "workshop_recent_activity": self.recent_activity, "workshop_list_issues": self.list_issues, "workshop_issue_detail": self.issue_detail, "workshop_capability_versions": self.capability_versions, "workshop_evaluation_report": self.evaluation_report, "workshop_release_status": self.release_status, "workshop_quality_summary": self.quality_summary, "workshop_quality_detail": self.quality_detail}
         handler = handlers.get(name)
         return handler(args) if handler else {"status": "ERROR", "error_type": "NOT_FOUND", "message": f"unknown tool: {name}"}
 

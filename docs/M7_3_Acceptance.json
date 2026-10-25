@@ -1,0 +1,106 @@
+{
+  "schema_version": "m7.3-unified-skill-mcp-quality-v1",
+  "observed_at": "2026-10-25",
+  "BASELINE_HEAD": "951e22d94108a3c6088201b88fe332d4b53b35e0",
+  "SOURCE_HEAD": "951e22d94108a3c6088201b88fe332d4b53b35e0",
+  "FINAL_HEAD": null,
+  "REMOTE_HEAD": null,
+  "CODEX_CLI_VERSION": "codex-cli 0.163.0",
+  "M7_3_OVERALL_STATUS": "PARTIAL",
+  "ENGINEERING_CAPABILITY_STATUS": "PASS",
+  "M7_3_SKILL_REGISTRY": "PASS",
+  "M7_3_SKILL_ROUTING_LABELS": "PASS",
+  "M7_3_SKILL_NATURAL_INVOCATION": "NOT_OBSERVABLE",
+  "M7_3_SKILL_THREE_ARM_RUN": "PASS",
+  "M7_3_SKILL_INDEPENDENT_ORACLE": "PASS",
+  "M7_3_SKILL_BENEFIT_VERDICT": "INCONCLUSIVE",
+  "M7_3_THIRD_PARTY_MCP_CLI": "PARTIAL",
+  "M7_3_THIRD_PARTY_MCP_ROLLBACK": "PASS",
+  "M7_3_JOINT_ATTRIBUTION": "PASS",
+  "M7_3_QUALITY_REPORT": "PASS",
+  "M7_3_OBSERVER_OVERHEAD": "UNVERIFIED",
+  "M7_3_PRIVACY_FAIL_OPEN": "PASS",
+  "M7_3_NO_SECOND_CODEX_DAILY": "PASS",
+  "M7_3_EXTRA_PROVIDER_AUTH": "NO",
+  "M7_3_DESKTOP": "BLOCKED_ENV",
+  "M7_3_CODEX_EXEC": "HOST_UNSUPPORTED",
+  "M6_2_REAL_OPTIMIZATION_BENEFIT": "INCONCLUSIVE",
+  "PRODUCTION_AUTO_RELEASE": "DISABLED",
+  "TESTS": "102/102; skipped=0; actually_ran=yes",
+  "targeted_tests": "7/7; skipped=0",
+  "skipped": 0,
+  "actually_ran": true,
+  "GIT_PUSH": "pending",
+  "test_commands": [
+    "PYTHONPATH=servers python -m unittest -v tests.test_m73_quality",
+    "PYTHONPATH=servers python -m unittest discover -s tests -p 'test_*.py'",
+    "PYTHONPATH=servers python -m compileall -q servers/shutu_workshop plugins/shutu-skill-workshop/bin/run_mcp.py tests/test_m73_quality.py"
+  ],
+  "evidence": {
+    "skill_registry": "tests.test_m73_quality.test_skill_registry_keeps_scope_identity_and_does_not_claim_host_invocation",
+    "routing": "tests.test_m73_quality.test_routing_excludes_forced_and_keeps_unknown_natural_metrics",
+    "three_arm_test": "tests.test_m73_quality.test_three_arm_runner_uses_external_oracle_and_frozen_hashes",
+    "third_party_mcp": "tests.test_m73_quality.test_third_party_manifest_is_explicit_reversible_and_real_stdio_probe",
+    "joint_attribution": "tests.test_m73_quality.test_joint_attribution_rejects_bare_cross_session_request_id",
+    "fixture_evidence_tier": "FIXTURE_EXECUTED",
+    "third_party_evidence_tier": "REAL_TASK_EXECUTED_LOCAL_NO_SIDE_EFFECT",
+    "real_host_skill_invocation": "NOT_OBSERVABLE",
+    "three_arm": {
+      "report_id": "quality-three-arm_6684de701ffe47cc8454621222a9aa29",
+      "case_ids": ["target", "normal-regression", "holdout"],
+      "environment_fingerprint": "m73-local-fixture-v1",
+      "oracle_id": "m73-demo-oracle",
+      "oracle_version": "1",
+      "arms": {
+        "no_skill": {
+          "artifact_hash": "4bb642b5b443a76bfe26e341eb2c4696a2fb5079bed27d963de547a2266ab480",
+          "trace_id": null,
+          "task_result": {"target": "failed", "normal-regression": "success", "holdout": "failed"},
+          "evidence_tier": "FIXTURE_EXECUTED"
+        },
+        "baseline": {
+          "artifact_hash": "c5fe9bf889d285556375e5762a26355e4f2f3d907214aa080e12896c75ebce80",
+          "trace_id": null,
+          "task_result": {"target": "failed", "normal-regression": "success", "holdout": "failed"},
+          "evidence_tier": "FIXTURE_EXECUTED"
+        },
+        "candidate": {
+          "artifact_hash": "b200fe2efcd023f9a75c610b5cbe028a10665f57865288e0dd669d7e3ba47c09",
+          "trace_id": null,
+          "task_result": {"target": "success", "normal-regression": "success", "holdout": "success"},
+          "evidence_tier": "FIXTURE_EXECUTED"
+        }
+      },
+      "fixture_verdict": "IMPROVED",
+      "production_benefit_verdict": "INCONCLUSIVE"
+    },
+    "real_codex_cli_third_party": {
+      "host": "codex_cli",
+      "codex_cli_version": "codex-cli 0.163.0",
+      "server_name": "m73-observed",
+      "trace_id": "mcp-trace_666610e4f4f948aaa815386475cc3187",
+      "event_refs": [
+        "mcp-observer:client_to_server:5",
+        "mcp-observer:server_to_client:6"
+      ],
+      "request_id": "2",
+      "tool_name": "echo",
+      "host_tool_result": "m73-observed-safe",
+      "task_result": "unknown",
+      "evidence_tier": "REAL_AGENT_OBSERVED",
+      "observation_completeness": "partial",
+      "trace_status_after_cleanup": "incomplete",
+      "note": "Codex tool call/result completed; host-side observer child closed without a complete EOF trace. No replay was attempted."
+    },
+    "isolated_codex_provider_probe": "BLOCKED_ENV:401_missing_bearer",
+    "observer_probe": "9 forwarded/9 observed, failed_observations=0, notification_count=1"
+  },
+  "known_gaps": [
+    "Native Codex Skill lifecycle events are not exposed by the current host.",
+    "No paired real direct/Observer overhead sample was collected.",
+    "Desktop GUI acceptance is BLOCKED_ENV.",
+    "Complete codex exec tool-result acceptance is HOST_UNSUPPORTED.",
+    "M6.2 real optimization benefit remains INCONCLUSIVE."
+  ],
+  "next_stage": "Run a provider-authorized real three-arm Skill comparison and paired third-party Codex CLI overhead sample when the host exposes those surfaces."
+}

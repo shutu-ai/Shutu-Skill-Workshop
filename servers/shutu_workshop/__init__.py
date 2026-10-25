@@ -17,6 +17,21 @@ from .models import (
 from .redaction import RedactionPolicy
 from .storage import M1Database
 from .traces import TraceStore
+from .quality import (
+    JointAttribution,
+    QualityCase,
+    QualityEvidence,
+    QualityFinding,
+    QualityMetric,
+    QualityReport,
+    QualityService,
+    SkillObservation,
+    SkillRegistry,
+    SkillRoutingEvaluator,
+    SkillSelectionLabel,
+    ThreeArmQualityRunner,
+)
+from .mcp_quality import ThirdPartyMcpManager, ThirdPartyMcpRegistration
 from .adapters import (
     AdapterDescriptor,
     AdapterEvent,
@@ -133,6 +148,20 @@ __all__ = [
     "TraceEvent",
     "TraceIngestor",
     "TraceStore",
+    "JointAttribution",
+    "QualityCase",
+    "QualityEvidence",
+    "QualityFinding",
+    "QualityMetric",
+    "QualityReport",
+    "QualityService",
+    "SkillObservation",
+    "SkillRegistry",
+    "SkillRoutingEvaluator",
+    "SkillSelectionLabel",
+    "ThreeArmQualityRunner",
+    "ThirdPartyMcpManager",
+    "ThirdPartyMcpRegistration",
     "HTTPProxyResult",
     "CorrelationScope",
     "McpTraceRecorder",

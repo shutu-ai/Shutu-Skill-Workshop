@@ -71,7 +71,7 @@ class M7PluginTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "shutu-skill-workshop")
-            self.assertEqual(len(responses[1]["result"]["tools"]), 7)
+            self.assertEqual(len(responses[1]["result"]["tools"]), 9)
             health = json.loads(responses[2]["result"]["content"][0]["text"])
             activity = json.loads(responses[3]["result"]["content"][0]["text"])
             issues = json.loads(responses[4]["result"]["content"][0]["text"])

@@ -20,7 +20,7 @@ def database_path(value: str | Path) -> Path:
 class M1Database:
     """Open a workspace DB and apply only the M0-compatible M1 migrations."""
 
-    latest_schema_version = 10
+    latest_schema_version = 11
 
     def __init__(self, workspace_or_db: str | Path) -> None:
         self.db_path = database_path(workspace_or_db)
@@ -123,6 +123,11 @@ class M1Database:
                 self._create_m61_experiment_schema(connection)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (10, datetime('now'))"
+                )
+            if 11 not in applied:
+                self._create_m73_quality_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (11, datetime('now'))"
                 )
             connection.commit()
         except BaseException:
@@ -915,5 +920,36 @@ class M1Database:
             """,
             "CREATE INDEX IF NOT EXISTS idx_experiment_identities_release ON experiment_identities(linked_release_id, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_experiment_release_links_release ON experiment_release_links(release_id, linked_at)",
+        ):
+            connection.execute(statement)
+
+    @staticmethod
+    def _create_m73_quality_schema(connection: sqlite3.Connection) -> None:
+        """Persist additive M7.3 reports without changing historical evidence."""
+
+        for statement in (
+            """
+            CREATE TABLE IF NOT EXISTS quality_runs (
+                run_id TEXT PRIMARY KEY,
+                report_kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                environment_fingerprint TEXT NOT NULL DEFAULT '',
+                report_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS quality_evidence (
+                evidence_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES quality_runs(run_id) ON DELETE CASCADE,
+                capability_kind TEXT NOT NULL,
+                capability_id TEXT NOT NULL,
+                capability_version_id TEXT NOT NULL DEFAULT '',
+                task_case_id TEXT NOT NULL DEFAULT '',
+                evidence_json TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_quality_runs_kind ON quality_runs(report_kind, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_quality_evidence_capability ON quality_evidence(capability_id, task_case_id)",
         ):
             connection.execute(statement)

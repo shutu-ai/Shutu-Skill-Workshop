@@ -31,6 +31,8 @@ from .release import (
     isolated_skill_suite,
 )
 from .traces import TraceStore
+from .mcp_quality import ThirdPartyMcpManager
+from .quality import QualityService, SkillRegistry, SkillRoutingEvaluator, SkillSelectionLabel
 
 
 def _value(value: Any) -> Any:
@@ -282,6 +284,49 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_show = feedback_commands.add_parser("show")
     feedback_show.add_argument("feedback_id")
     feedback_show.add_argument("--json", action="store_true")
+
+    quality = commands.add_parser("quality")
+    quality_commands = quality.add_subparsers(dest="quality_command", required=True)
+    quality_summary = quality_commands.add_parser("summary")
+    quality_summary.add_argument("--capability-id", default="")
+    quality_summary.add_argument("--kind", dest="report_kind", default="")
+    quality_summary.add_argument("--json", action="store_true")
+    quality_detail = quality_commands.add_parser("detail")
+    quality_detail.add_argument("report_id", nargs="?", default="")
+    quality_detail.add_argument("--capability-id", default="")
+    quality_detail.add_argument("--json", action="store_true")
+    quality_scan = quality_commands.add_parser("skill-scan")
+    quality_scan.add_argument("--root", action="append", required=True)
+    quality_scan.add_argument("--scope", choices=("global", "project", "plugin"), default="project")
+    quality_scan.add_argument("--source", default="explicit")
+    quality_scan.add_argument("--json", action="store_true")
+    quality_routing = quality_commands.add_parser("routing")
+    quality_routing.add_argument("--labels", type=Path, required=True)
+    quality_routing.add_argument("--environment", default="")
+    quality_routing.add_argument("--json", action="store_true")
+
+    mcp = commands.add_parser("mcp")
+    mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
+    mcp_commands.add_parser("list")
+    mcp_host_list = mcp_commands.add_parser("host-list")
+    mcp_host_list.add_argument("--codex-command", default="codex")
+    mcp_host_list.add_argument("--codex-home", type=Path)
+    mcp_inspect = mcp_commands.add_parser("inspect")
+    mcp_inspect.add_argument("name")
+    mcp_enable = mcp_commands.add_parser("enable")
+    mcp_enable.add_argument("name")
+    mcp_enable.add_argument("--command", nargs="+", required=True)
+    mcp_enable.add_argument("--cwd", type=Path)
+    mcp_enable.add_argument("--env", action="append", default=[])
+    mcp_enable.add_argument("--scope", choices=("project", "user"), default="project")
+    mcp_disable = mcp_commands.add_parser("disable")
+    mcp_disable.add_argument("name")
+    mcp_verify = mcp_commands.add_parser("verify")
+    mcp_verify.add_argument("name")
+    mcp_probe = mcp_commands.add_parser("probe")
+    mcp_probe.add_argument("name")
+    mcp_probe.add_argument("--messages", type=Path, required=True)
+    mcp_probe.add_argument("--timeout", type=float, default=30.0)
     return parser
 
 
@@ -587,6 +632,72 @@ def main(argv: list[str] | None = None) -> int:
             if value is None:
                 raise SystemExit("feedback does not exist")
             _print(value)
+        return 0
+
+    if args.command == "quality":
+        if args.quality_command == "summary":
+            _print(QualityService(args.workspace).summary(capability_id=args.capability_id, report_kind=args.report_kind))
+        elif args.quality_command == "detail":
+            _print(QualityService(args.workspace).detail(args.report_id, capability_id=args.capability_id))
+        elif args.quality_command == "skill-scan":
+            _print([item.to_dict() for item in SkillRegistry(args.workspace).discover(args.root, scope=args.scope, source=args.source)])
+        elif args.quality_command == "routing":
+            try:
+                payload = json.loads(args.labels.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise SystemExit(f"invalid routing labels: {exc}") from exc
+            values = payload.get("labels", payload) if isinstance(payload, dict) else payload
+            if not isinstance(values, list):
+                raise SystemExit("routing labels must be a JSON array")
+            labels = [
+                SkillSelectionLabel(
+                    case_id=str(item["case_id"]),
+                    task_input_hash=str(item["task_input_hash"]),
+                    target_skill_id=str(item.get("target_skill_id", "")),
+                    should_use=str(item["should_use"]),
+                    expected_tools=tuple(str(value) for value in item.get("expected_tools", [])),
+                    scenario=str(item.get("scenario", "")),
+                    label_source=str(item.get("label_source", "human_review")),
+                    selection_mode=str(item.get("selection_mode", "NATURAL")),
+                    observed_invocation=item.get("observed_invocation"),
+                    observation_evidence_tier=str(item.get("observation_evidence_tier", "NOT_OBSERVABLE")),
+                )
+                for item in values
+            ]
+            _print(SkillRoutingEvaluator().evaluate(labels, environment_fingerprint=args.environment).to_dict())
+        return 0
+
+    if args.command == "mcp":
+        manager = ThirdPartyMcpManager(args.workspace)
+        if args.mcp_command == "list":
+            _print([item.to_dict() for item in manager.list()])
+        elif args.mcp_command == "host-list":
+            _print(manager.host_list(codex_command=args.codex_command, codex_home=args.codex_home))
+        elif args.mcp_command == "inspect":
+            value = manager.inspect(args.name)
+            if value is None:
+                raise SystemExit("MCP manifest does not exist")
+            _print(value)
+        elif args.mcp_command == "enable":
+            env: dict[str, str] = {}
+            for item in args.env:
+                if "=" not in item:
+                    raise SystemExit("--env must be KEY=VALUE")
+                key, value = item.split("=", 1)
+                env[key] = value
+            _print(manager.enable(args.name, args.command, cwd=args.cwd, env=env, scope=args.scope))
+        elif args.mcp_command == "disable":
+            _print(manager.disable(args.name))
+        elif args.mcp_command == "verify":
+            _print(manager.verify(args.name))
+        elif args.mcp_command == "probe":
+            try:
+                messages = json.loads(args.messages.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise SystemExit(f"invalid MCP messages: {exc}") from exc
+            if not isinstance(messages, list):
+                raise SystemExit("MCP messages must be a JSON array")
+            _print(manager.run_probe(args.name, messages, timeout=args.timeout))
         return 0
 
     ingestor = TraceIngestor(args.workspace)

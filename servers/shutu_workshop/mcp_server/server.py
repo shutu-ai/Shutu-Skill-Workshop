@@ -21,6 +21,8 @@ TOOLS = [
     {"name": "workshop_capability_versions", "description": "Read Skill/MCP capability snapshots and version lineage.", "inputSchema": {"type": "object", "properties": {"capability_id": {"type": "string"}}}},
     {"name": "workshop_evaluation_report", "description": "Read the latest or requested evaluation report, including unknown results and evidence tier.", "inputSchema": {"type": "object", "properties": {"run_id": {"type": "string"}}}},
     {"name": "workshop_release_status", "description": "Read release plans, links, and post-release observation summaries.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "workshop_quality_summary", "description": "Read bounded Skill/MCP quality summaries with sample counts and missing evidence.", "inputSchema": {"type": "object", "properties": {"capability_id": {"type": "string"}, "report_kind": {"type": "string"}}}},
+    {"name": "workshop_quality_detail", "description": "Read one read-only quality report with evidence, Oracle, and constrained findings.", "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}, "capability_id": {"type": "string"}}}},
 ]
 
 

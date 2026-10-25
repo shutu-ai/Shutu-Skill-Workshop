@@ -20,6 +20,7 @@ from ..evolution import EvaluationService, EvolutionDiagnosisService, ProposalSe
 from ..release import ReleaseObservationService
 from ..storage import M1Database, database_path
 from ..traces import TraceStore
+from ..quality import QualityService
 
 
 def _json_value(value: Any) -> Any:
@@ -88,6 +89,7 @@ class WorkshopMcpService:
                 "real_agent_runs",
                 "evaluation_runs",
                 "release_links",
+                "quality_runs",
             ):
                 counts[table] = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             row = connection.execute("SELECT MAX(occurred_at) FROM trace_events").fetchone()
@@ -323,6 +325,20 @@ class WorkshopMcpService:
             **value,
         }
 
+    def quality_summary(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        arguments = arguments or {}
+        return QualityService(self.db).summary(
+            capability_id=str(arguments.get("capability_id") or ""),
+            report_kind=str(arguments.get("report_kind") or ""),
+        )
+
+    def quality_detail(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        arguments = arguments or {}
+        return QualityService(self.db).detail(
+            str(arguments.get("report_id") or ""),
+            capability_id=str(arguments.get("capability_id") or ""),
+        )
+
     def call(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         handlers = {
             "workshop_health": self.health,
@@ -332,6 +348,8 @@ class WorkshopMcpService:
             "workshop_capability_versions": self.capability_versions,
             "workshop_evaluation_report": self.evaluation_report,
             "workshop_release_status": self.release_status,
+            "workshop_quality_summary": self.quality_summary,
+            "workshop_quality_detail": self.quality_detail,
         }
         handler = handlers.get(name)
         if handler is None:
