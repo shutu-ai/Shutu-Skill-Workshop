@@ -43,7 +43,7 @@ not produce a completed Tool Result.
 | G19 no second Codex/provider auth | `PASS` | no second agent, no extra auth |
 | G20 regression | `PASS` | `87/87` tests, skipped `0` |
 | G21 Windows runbook | `PASS` | scripts and runbook |
-| G22 Git remote | pending final handoff | final/remote SHA recorded after push |
+| G22 Git remote | `PASS` | final/remote SHA recorded in the handoff |
 
 ## Explicit non-claims
 

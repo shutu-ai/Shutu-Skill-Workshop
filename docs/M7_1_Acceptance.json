@@ -25,7 +25,7 @@
   "M7_1_RELEASE_AUTOMATION": "DISABLED",
   "M6_2_STATUS": "PARTIAL",
   "TESTS": "4/87, skipped=0",
-  "GIT_PUSH": "PENDING_FINAL_HANDOFF",
+  "GIT_PUSH": "PASS",
   "evidence": {
     "interactive_cli": "docs/M7_1_Host_Probe.json",
     "matrix": "docs/M7_1_Host_Capability_Matrix.md",
