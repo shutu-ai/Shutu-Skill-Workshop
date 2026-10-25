@@ -44,12 +44,12 @@ zero observation failures, zero pending requests, and Observer session close
 `COMPLETE`. The sample is intentionally reported as `PARTIAL_SAMPLE`; P50/P95
 and production overhead claims are not made from one pair.
 
-The local implementation commit is `56594c57c469b0935747c6da72a23a57c0192e53`.
-Direct GitHub access failed at 443. The one-shot proxy reached GitHub but the
-push endpoint repeatedly returned non-fast-forward while stable read-only
-`ls-remote` reported `09049c31b219747942d3e7430c5c24d37a9df227` as the remote
-tip. No force push was used and no proxy setting was persisted; `GIT_PUSH` is
-therefore `BLOCKED_ENV`.
+The original implementation commit is `56594c57c469b0935747c6da72a23a57c0192e53`;
+the final acceptance head at synchronization time is
+`167083346d8f6de5551456f13c7f27dbe081037b`. After VPN direct connectivity was
+available, that head was pushed to `main` with a normal fast-forward and the
+remote SHA matched. No force push was used and no proxy setting was persisted;
+`GIT_PUSH` is `PASS`.
 
 ## Required next run after authorization
 

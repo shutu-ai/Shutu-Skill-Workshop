@@ -24,7 +24,7 @@
   "ADDITIONAL_PROVIDER_AUTH_REQUIRED": "ISOLATED_HOME_ONLY",
   "TESTS": "112/112; skipped=0",
   "SKIPPED": 0,
-  "GIT_PUSH": "BLOCKED_ENV",
+  "GIT_PUSH": "PASS",
   "evidence": {
     "host": {
       "codex_cli_version": "codex-cli 0.163.0",
@@ -83,10 +83,10 @@
     },
     "git": {
       "final_and_remote_in_json": null,
-      "local_commit": "56594c57c469b0935747c6da72a23a57c0192e53",
-      "remote_main_seen": "09049c31b219747942d3e7430c5c24d37a9df227",
-      "direct_push": "BLOCKED_ENV:github_443",
-      "proxy_push": "BLOCKED_ENV:non_fast_forward_remote_view_inconsistent_with_ls_remote",
+      "local_commit": "167083346d8f6de5551456f13c7f27dbe081037b",
+      "remote_main_seen": "167083346d8f6de5551456f13c7f27dbe081037b",
+      "direct_push": "PASS:fast_forward_vpn_direct",
+      "proxy_push": "NOT_REQUIRED_AFTER_VPN",
       "untracked_preserved": 15,
       "proxy_persisted": false
     }
