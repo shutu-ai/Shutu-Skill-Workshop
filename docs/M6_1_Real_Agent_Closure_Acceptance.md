@@ -1,8 +1,8 @@
 # M6.1 Real-Agent Closure Acceptance
 
-Status at handoff: `PARTIAL` / provider `BLOCKED_ENV`.
+Status at handoff: `PARTIAL` / authenticated provider, inconclusive MCP task execution.
 
-The Codex CLI was real (`codex-cli 0.163.0`) and the local baseline/candidate artifacts were independently activated. The isolated provider home was not authenticated, so the real Codex task stopped before any provider-backed MCP call. No FakeProvider, mock transcript, hand-written tool result, or production target was used.
+The Codex CLI was real (`codex-cli 0.163.0`), both isolated homes authenticated, and all baseline/candidate artifacts were independently activated. The authenticated pair completed six processes, but only one real MCP call was observed and it failed; five runs emitted no tool event. No FakeProvider, mock transcript, hand-written tool result, or production target was used.
 
 ## Gate ledger
 
@@ -10,16 +10,16 @@ The Codex CLI was real (`codex-cli 0.163.0`) and the local baseline/candidate ar
 |---|---|---|
 | G0 | PASS | local checkout started at `3be9b51`; live remote baseline `4b070b4` was verified through the proxy; dirty/untracked work was preserved |
 | G1 | PASS | M0–M6 tests, compileall, CLI help, and M6.1 tests were run |
-| G2 | PARTIAL | isolated HOME/version/auth layers are implemented; auth is not available |
-| G3 | BLOCKED_ENV | no provider-backed Codex text response |
-| G4 | BLOCKED_ENV | direct fixture handshake passed, but Codex-host initialize was not observed |
-| G5 | BLOCKED_ENV | Codex-host tools/call/result count is zero |
+| G2 | PASS | both pair-side isolated HOMEs reported authenticated |
+| G3 | PASS | both isolated Codex text probes returned `READY` |
+| G4 | UNVERIFIED | a Codex tool call proves the host reached MCP, but initialize/list events are not separately captured |
+| G5 | INCONCLUSIVE | one real tools/call/result failed; five runs had no tool event |
 | G6 | PASS | baseline/candidate bytes and hashes differ |
 | G7 | PASS | prelaunch/runtime hashes and scoped activation records match each side |
 | G8 | PASS | declared-vs-actual and post-freeze mutation negatives pass |
 | G9 | PASS | side commands, processes, homes, and MCP scopes are independent |
 | G10 | PASS | `FALSE_EXACT_JOIN_COUNT=0`; ids are scoped by trace/side/case |
-| G11 | BLOCKED_ENV | three cases were attempted on both sides, but provider prevented task completion |
+| G11 | INCONCLUSIVE | three cases were attempted on both sides; all six task results remain `unknown` |
 | G12 | PASS | holdout Oracle reads observed result events only; it does not receive expected answers |
 | G13 | PASS | pair records comparable runner/environment fields and side-specific activation data |
 | G14 | PASS | activation/tool evidence is required; metadata alone cannot promote a run |
@@ -40,18 +40,18 @@ BASELINE_HEAD=4b070b4
 FINAL_HEAD=<commit SHA recorded at handoff>
 REMOTE_HEAD=<verified origin/main SHA, or BLOCKED_ENV>
 M6_1_STATUS=PARTIAL
-PROVIDER_AUTH_PRECHECK=BLOCKED_ENV
-CODEX_REAL_TEXT_RESPONSE=BLOCKED_ENV
-REAL_CODEX_MCP_INITIALIZE=BLOCKED_ENV
-REAL_CODEX_MCP_TOOLS_LIST=BLOCKED_ENV
-REAL_CODEX_MCP_TOOLS_CALL=BLOCKED_ENV
+PROVIDER_AUTH_PRECHECK=PASS
+CODEX_REAL_TEXT_RESPONSE=PASS
+REAL_CODEX_MCP_INITIALIZE=UNVERIFIED
+REAL_CODEX_MCP_TOOLS_LIST=UNVERIFIED
+REAL_CODEX_MCP_TOOLS_CALL=PASS
 BASELINE_ARTIFACT_ACTIVATION=PASS
 CANDIDATE_ARTIFACT_ACTIVATION=PASS
 DECLARED_VS_ACTUAL_HASH_NEGATIVE_TEST=PASS
 REAL_AGENT_PAIRED_CASES=3
-REAL_AGENT_INDEPENDENT_ORACLE=BLOCKED_ENV
-REAL_AGENT_PAIR_EXECUTION=BLOCKED_ENV
-REAL_AGENT_OPTIMIZATION_VERDICT=BLOCKED_ENV
+REAL_AGENT_INDEPENDENT_ORACLE=UNVERIFIED
+REAL_AGENT_PAIR_EXECUTION=INCONCLUSIVE
+REAL_AGENT_OPTIMIZATION_VERDICT=INCONCLUSIVE
 HISTORICAL_BEFORE_BINDING=PASS
 REAL_OBSERVATION_FEEDBACK=PARTIAL
 OPEN_CODE_REAL_TOOL_HOOK=BLOCKED_ENV
@@ -63,7 +63,7 @@ TESTS=79/79; skipped=0
 GIT_PUSH=<actual result>
 COMMIT=<actual commit SHA>
 DOCS=docs/M6_1_Provider_Auth_Probe.md, docs/M6_1_Artifact_Activation_And_Paired_Experiment_Design.md, docs/M6_1_Real_Agent_Closure_Acceptance.md, docs/M6_1_Operations_Runbook.md, docs/M6_1_Acceptance.json
-NEXT_STAGE=authenticate an explicitly isolated Codex HOME, rerun provider preflight, then rerun all three paired cases and require non-zero Codex MCP call/result refs plus the independent Oracle before claiming optimization.
+NEXT_STAGE=diagnose the failed MCP tool result, make each side/case explicitly call its configured server, then require successful MCP result refs plus the independent Oracle before claiming optimization.
 ```
 
 The pair is an isolated fixture validation, not a production business-environment optimization claim. `REAL_AGENT_OBSERVED` and `REAL_ARTIFACT_ACTIVATED` are intentionally not reported as `REAL_TASK_EXECUTED`.

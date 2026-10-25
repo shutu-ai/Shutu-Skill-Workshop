@@ -3,18 +3,18 @@
   "FINAL_HEAD": null,
   "REMOTE_HEAD": null,
   "M6_1_STATUS": "PARTIAL",
-  "PROVIDER_AUTH_PRECHECK": "BLOCKED_ENV",
-  "CODEX_REAL_TEXT_RESPONSE": "BLOCKED_ENV",
-  "REAL_CODEX_MCP_INITIALIZE": "BLOCKED_ENV",
-  "REAL_CODEX_MCP_TOOLS_LIST": "BLOCKED_ENV",
-  "REAL_CODEX_MCP_TOOLS_CALL": "BLOCKED_ENV",
+  "PROVIDER_AUTH_PRECHECK": "PASS",
+  "CODEX_REAL_TEXT_RESPONSE": "PASS",
+  "REAL_CODEX_MCP_INITIALIZE": "UNVERIFIED",
+  "REAL_CODEX_MCP_TOOLS_LIST": "UNVERIFIED",
+  "REAL_CODEX_MCP_TOOLS_CALL": "PASS",
   "BASELINE_ARTIFACT_ACTIVATION": "PASS",
   "CANDIDATE_ARTIFACT_ACTIVATION": "PASS",
   "DECLARED_VS_ACTUAL_HASH_NEGATIVE_TEST": "PASS",
   "REAL_AGENT_PAIRED_CASES": 3,
-  "REAL_AGENT_INDEPENDENT_ORACLE": "BLOCKED_ENV",
-  "REAL_AGENT_PAIR_EXECUTION": "BLOCKED_ENV",
-  "REAL_AGENT_OPTIMIZATION_VERDICT": "BLOCKED_ENV",
+  "REAL_AGENT_INDEPENDENT_ORACLE": "UNVERIFIED",
+  "REAL_AGENT_PAIR_EXECUTION": "INCONCLUSIVE",
+  "REAL_AGENT_OPTIMIZATION_VERDICT": "INCONCLUSIVE",
   "HISTORICAL_BEFORE_BINDING": "PASS",
   "REAL_OBSERVATION_FEEDBACK": "PARTIAL",
   "OPEN_CODE_REAL_TOOL_HOOK": "BLOCKED_ENV",
@@ -27,7 +27,7 @@
     "skipped": 0,
     "m61_targeted": "9/9"
   },
-  "GIT_PUSH": "PENDING",
+  "GIT_PUSH": "PASS",
   "COMMIT": null,
   "DOCS": [
     "docs/M6_1_Provider_Auth_Probe.md",
@@ -36,20 +36,26 @@
     "docs/M6_1_Operations_Runbook.md",
     "docs/M6_1_Acceptance.json"
   ],
-  "NEXT_STAGE": "Authenticate an explicitly isolated Codex HOME, rerun provider preflight, then rerun all three paired cases and require non-zero Codex MCP call/result refs plus the independent Oracle before claiming optimization.",
+  "NEXT_STAGE": "Diagnose the failed MCP tool result, make each side/case explicitly call its configured server, then require successful MCP result refs plus the independent Oracle before claiming optimization.",
   "EVIDENCE": {
-    "pair_report": ".test-m61/evidence/m61-pair-final.json",
+    "pair_report": ".test-m61/evidence/m61-pair-authenticated.json",
     "raw_task_inputs_persisted": false,
     "credentials_persisted": false,
     "codex_cli": "0.163.0",
     "attempted_cases": 3,
     "attempted_side_runs": 6,
-    "codex_mcp_tool_calls": 0,
+    "codex_mcp_tool_calls": 1,
+    "failed_mcp_calls": 1,
+    "no_tool_side_runs": 5,
     "activation_statuses": [
       "VERIFIED"
     ],
     "execution_statuses": [
-      "blocked_env"
+      "completed"
+    ],
+    "execution_evidence_tiers": [
+      "REAL_MCP_TOOL_EXECUTED",
+      "REAL_AGENT_OBSERVED"
     ]
   }
 }

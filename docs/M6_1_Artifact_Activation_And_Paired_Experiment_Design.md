@@ -34,11 +34,11 @@ The baseline and candidate fixtures are different files and different processes:
 - `REAL_TASK_EXECUTED`: activated artifact, real MCP call/result, independent Oracle, and comparable environment all exist.
 - `FIXTURE_EXECUTED`, `ISOLATED_ARTIFACT_EXECUTED`, and `SIMULATED_TRACE` never promote to `REAL_TASK_EXECUTED`.
 
-The current pair reached `REAL_AGENT_OBSERVED` plus verified activation only. Codex made no MCP tool call because the provider/auth layer was blocked; the independent Oracle therefore returned `unknown`.
+The authenticated pair reached verified activation on all six side runs. One baseline target run reached `REAL_MCP_TOOL_EXECUTED` but its tool result failed; the other five runs remained `REAL_AGENT_OBSERVED` with no observed tool call. The independent Oracle returned `unknown` for all six, so none reached `REAL_TASK_EXECUTED`.
 
 ## Three-case pair
 
-`scripts/m6_1_real_pair.py` runs `target`, `normal-regression`, and `holdout-boundary` for both sides. Its Oracle inspects only observed MCP result events, not task text, expected output, agent self-evaluation, or server labels. The final run contains 3 attempted pairs / 6 side runs, six `BLOCKED_ENV` results, six `VERIFIED` activations, zero Codex MCP calls, and zero successful task results.
+`scripts/m6_1_real_pair.py` runs `target`, `normal-regression`, and `holdout-boundary` for both sides. Its Oracle inspects only observed MCP result events, not task text, expected output, agent self-evaluation, or server labels. The authenticated run contains 3 attempted pairs / 6 completed side runs, six `VERIFIED` activations, one failed observed Codex MCP call, five no-tool runs, and zero successful Oracle results.
 
 ## Negative assertions
 

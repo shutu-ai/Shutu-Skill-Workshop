@@ -31,7 +31,7 @@ python -m shutu_workshop --workspace .test-m61\agent-workspace agent codex prefl
   -TaskInputPath .test-m61\task-input.json -Timeout 30
 ```
 
-Only continue to the pair after provider/auth preflight is usable. The current environment returns `NOT_AUTHENTICATED` and `BLOCKED_ENV`; do not loop retries or fill in a tool result.
+Only continue to the pair after provider/auth preflight is usable. The authenticated rerun returned `READY`; do not fill in a tool result when Codex does not call the tool or when the real result fails.
 
 ## 3. Three-case paired run
 
@@ -41,7 +41,7 @@ python scripts/m6_1_real_pair.py `
   --codex-home .test-m61\pair-codex-home-final `
   --baseline-root .test-m61\artifacts\baseline `
   --candidate-root .test-m61\artifacts\candidate `
-  --output .test-m61\evidence\m61-pair-final.json `
+  --output .test-m61\evidence\m61-pair-authenticated.json `
   --timeout 30
 ```
 
@@ -52,7 +52,7 @@ $evidence = Get-Content .test-m61\evidence\m61-pair-final.json -Raw | ConvertFro
 $evidence.results | Select-Object case_id,baseline_or_candidate,activation_status,execution_status,task_result,execution_evidence_tier
 ```
 
-The required completion signal is not merely `activation_status=VERIFIED`: it is a non-zero Codex MCP call/result, an independent Oracle verdict, and comparable baseline/candidate evidence for every required case.
+The authenticated result is still inconclusive: one MCP call failed and five runs had no tool event. The required completion signal is not merely `activation_status=VERIFIED`: it is a successful Codex MCP call/result, an independent Oracle verdict, and comparable baseline/candidate evidence for every required case.
 
 ## 4. Observation and feedback
 
@@ -72,7 +72,7 @@ codex login --home $env:CODEX_HOME
 Remove-Item Env:CODEX_HOME
 ```
 
-The operator must complete the interactive authorization. Never copy `auth.json` or any credential from the normal home. Re-run the preflight and pair after authorization.
+For a fresh environment, the operator must complete the interactive authorization. Never copy `auth.json` or any credential from the normal home. In the supplied evidence, authorization was completed in both pair-side homes before the authenticated rerun.
 
 ## 7. Git handoff
 
