@@ -1,0 +1,42 @@
+{
+  "BASELINE_HEAD": "a68abe3504509380b9d10f1d3b734bd8b73534e9",
+  "FINAL_HEAD": null,
+  "REMOTE_HEAD": null,
+  "M7_PLUGIN_STATUS": "PARTIAL",
+  "M7_PACKAGE_SCHEMA": "PASS",
+  "M7_LOCAL_MARKETPLACE_INSTALL": "HOST_VERIFIED",
+  "M7_PLUGIN_ENABLE_DISABLE_UNINSTALL": "HOST_VERIFIED",
+  "M7_WORKSHOP_MCP_IN_CODEX": "BLOCKED_ENV",
+  "M7_WORKSHOP_SKILL_IN_CODEX": "BLOCKED_ENV",
+  "M7_HOOKS_TRUST_AND_REAL_CAPTURE": "BLOCKED_ENV",
+  "M7_SKILL_INVOCATION_OBSERVABILITY": "NOT_OBSERVABLE",
+  "M7_NO_SECOND_CODEX_FOR_DAILY_USE": "PASS",
+  "M7_ADDITIONAL_OPENAI_AUTH_REQUIRED": "NO",
+  "M7_DATA_REDACTION_AND_RECOVERY": "PASS",
+  "M7_OBSERVER_OVERHEAD": "UNVERIFIED",
+  "M7_REAL_ISSUE_DIAGNOSIS": "PARTIAL",
+  "M7_RELEASE_AUTOMATION": "DISABLED",
+  "M6_2_STATUS": "PARTIAL",
+  "M6_2_REAL_MCP_RESULT_SUCCESS": 0,
+  "M6_2_REAL_AGENT_CORRECTNESS": "UNVERIFIED",
+  "M6_2_REAL_OPTIMIZATION_BENEFIT": "INCONCLUSIVE",
+  "M0_M6_1_REGRESSION": "PASS",
+  "M7_TESTS": "4/4; skipped=0; full=83/83",
+  "GIT_PUSH": "UNVERIFIED",
+  "DOCS": [
+    "docs/M7_0_Plugin_Integration_Feasibility.md",
+    "docs/M7_Codex_Native_Plugin_Design.md",
+    "docs/M7_Codex_Native_Plugin_Acceptance.md",
+    "docs/M7_Operations_Runbook.md",
+    "docs/M6_2_Real_MCP_Oracle_Closure.md",
+    "docs/M7_Acceptance.json"
+  ],
+  "KNOWN_LIMITATIONS": [
+    "Current codex exec host does not expose the installed local plugin MCP tools.",
+    "No trusted normal plugin Hook event or Skill invocation was observed.",
+    "Codex desktop installation and invocation were not available for verification.",
+    "M6.2 has one observed failed call, five no-tool runs, and unknown Oracle outcomes.",
+    "Observer overhead was not measured on a supporting normal host."
+  ],
+  "NEXT_STAGE": "Run one normal trusted Codex desktop session from the local Marketplace, call workshop_health and workshop_list_issues, invoke workshop-review, and capture SessionStart/PostToolUse evidence; then keep M6.2 independent."
+}

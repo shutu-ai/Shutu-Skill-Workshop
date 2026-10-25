@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "shutu-workshop": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${PLUGIN_ROOT}/bin/run_mcp.py"],
+      "env": {
+        "SHUTU_WORKSHOP_PLUGIN": "shutu-skill-workshop"
+      }
+    }
+  }
+}

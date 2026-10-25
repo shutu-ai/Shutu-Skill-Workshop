@@ -1,0 +1,17 @@
+{
+  "name": "shutu-workshop-local",
+  "plugins": [
+    {
+      "name": "shutu-skill-workshop",
+      "source": {
+        "source": "local",
+        "path": "./plugins/shutu-skill-workshop"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

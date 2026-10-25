@@ -1,0 +1,30 @@
+{
+  "description": "Bounded, summary-only Workshop observation hooks.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/ingest_event.py\"",
+            "timeout": 3,
+            "statusMessage": "Recording bounded Workshop session evidence"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/ingest_event.py\"",
+            "timeout": 3,
+            "statusMessage": "Recording bounded Workshop tool evidence"
+          }
+        ]
+      }
+    ]
+  }
+}

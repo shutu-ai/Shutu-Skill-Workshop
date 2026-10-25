@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "shutu-skill-workshop",
+  "version": "0.1.0",
+  "description": "Read-only local evidence review for Shutu Skill Workshop.",
+  "license": "MIT",
+  "keywords": ["skills", "mcp", "diagnostics", "local"],
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "Shutu Skill Workshop",
+        "shortDescription": "Review local Skill and MCP evidence.",
+        "longDescription": "Read-only local diagnostics, evidence, capability versions, evaluation state, and release observation summaries.",
+        "developerName": "Shutu AI",
+        "category": "Developer Tools",
+        "capabilities": ["Read"],
+        "defaultPrompt": ["Use Workshop evidence to review recent Skill and MCP issues."],
+        "brandColor": "#2563EB"
+      }
+    }
+  }
+}
