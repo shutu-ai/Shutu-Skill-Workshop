@@ -47,12 +47,12 @@ The normal interactive `codex` session called the registered Workshop server.
 The Observer trace was persisted in the existing SQLite store:
 
 - trace: `mcp-trace_a53de005239e4002b5eb659791f0333f`
-- success calls/results: `workshop_health` request `3`, and
-  `workshop_list_issues` request `4`, each with paired `mcp.tool_call` and
+- success calls/results: `workshop_health` request `2`, and
+  `workshop_list_issues` request `3`, each with paired `mcp.tool_call` and
   `mcp.tool_result` events;
 - controlled failure: `workshop_issue_detail` request `4` returned
   `INVALID_ARGUMENT` / `issue_id is required`, followed by a real
-  `workshop_list_issues` call;
+  `workshop_list_issues` request `5` call;
 - error event: `mcp-observer:server_to_client:10`, `error_type=mcp.error`,
   `correlation_quality=exact`;
 - existing M3 R01 occurrence: `issue_1df517b8b7fe48edaff7195a60023c07`, with
